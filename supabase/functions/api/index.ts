@@ -1,5 +1,5 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
+import { Hono } from 'npm:hono@4'
+import { cors } from 'npm:hono@4/cors'
 import { corsOptions } from '../_shared/cors.ts'
 import { authMiddleware } from '../_shared/auth.ts'
 

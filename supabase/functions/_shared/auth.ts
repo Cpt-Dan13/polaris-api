@@ -1,4 +1,4 @@
-import type { Context, Next } from 'hono'
+import type { Context, Next } from 'npm:hono@4'
 import { supabase } from './supabase.ts'
 
 export async function authMiddleware(c: Context, next: Next) {

@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono } from 'npm:hono@4'
 import { supabase } from '../../_shared/supabase.ts'
 import { requireRole } from '../../_shared/rbac.ts'
 
@@ -100,64 +100,86 @@ moderation.get('/blocks', requireRole('moderator'), async (c) => {
   return c.json({ data })
 })
 
-// ── User Moderation Actions ───────────────────────────────────────────────────
-// These routes update columns added by migration 20260717000001_add_moderation_columns
+// ── User Sanctions ────────────────────────────────────────────────────────────
+// Append-only — never mutate rows. Revoke by setting revoked_at/revoked_by.
 
-// POST /moderation/users/:id/ban
-moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<{ reason: string }>()
-
-  const { error } = await supabase
-    .from('profiles')
-    .update({
-      is_banned:  true,
-      ban_reason: body.reason,
-      banned_at:  new Date().toISOString(),
-    })
-    .eq('id', id)
-
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ success: true })
-})
-
-// POST /moderation/users/:id/unban
-moderation.post('/users/:id/unban', requireRole('admin'), async (c) => {
+// GET /moderation/users/:id/sanctions
+// Returns full sanction history for a user
+moderation.get('/users/:id/sanctions', requireRole('moderator'), async (c) => {
   const id = c.req.param('id')
 
-  const { error } = await supabase
-    .from('profiles')
-    .update({ is_banned: false, ban_reason: null, banned_at: null })
-    .eq('id', id)
+  const { data, error } = await supabase
+    .from('user_sanctions')
+    .select('*, issued_by_admin:admin_users!issued_by(full_name, email), revoked_by_admin:admin_users!revoked_by(full_name, email)')
+    .eq('user_id', id)
+    .order('issued_at', { ascending: false })
 
   if (error) return c.json({ error: error.message }, 500)
-  return c.json({ success: true })
+  return c.json({ data })
+})
+
+// POST /moderation/users/:id/warn
+moderation.post('/users/:id/warn', requireRole('moderator'), async (c) => {
+  const id        = c.req.param('id')
+  const body      = await c.req.json<{ reason: string }>()
+  const adminUser = c.get('adminUser') as { id: string }
+
+  const { data, error } = await supabase
+    .from('user_sanctions')
+    .insert({ user_id: id, type: 'warning', reason: body.reason, issued_by: adminUser.id })
+    .select()
+    .single()
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true, sanction: data })
 })
 
 // POST /moderation/users/:id/suspend
 moderation.post('/users/:id/suspend', requireRole('admin'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<{ duration_hours: number; reason: string }>()
+  const id        = c.req.param('id')
+  const body      = await c.req.json<{ duration_hours: number; reason: string }>()
+  const adminUser = c.get('adminUser') as { id: string }
 
-  const until = new Date(Date.now() + body.duration_hours * 3_600_000).toISOString()
+  const expires_at = new Date(Date.now() + body.duration_hours * 3_600_000).toISOString()
 
-  const { error } = await supabase
-    .from('profiles')
-    .update({ suspended_until: until, suspension_reason: body.reason })
-    .eq('id', id)
+  const { data, error } = await supabase
+    .from('user_sanctions')
+    .insert({ user_id: id, type: 'suspension', reason: body.reason, issued_by: adminUser.id, expires_at })
+    .select()
+    .single()
 
   if (error) return c.json({ error: error.message }, 500)
-  return c.json({ success: true, suspended_until: until })
+  return c.json({ success: true, sanction: data })
 })
 
-// POST /moderation/users/:id/unsuspend
-moderation.post('/users/:id/unsuspend', requireRole('admin'), async (c) => {
-  const id = c.req.param('id')
+// POST /moderation/users/:id/ban
+moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
+  const id        = c.req.param('id')
+  const body      = await c.req.json<{ reason: string }>()
+  const adminUser = c.get('adminUser') as { id: string }
+
+  // expires_at is null = permanent ban
+  const { data, error } = await supabase
+    .from('user_sanctions')
+    .insert({ user_id: id, type: 'ban', reason: body.reason, issued_by: adminUser.id, expires_at: null })
+    .select()
+    .single()
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true, sanction: data })
+})
+
+// POST /moderation/sanctions/:id/revoke
+// Revoke any active sanction (unban, unsuspend, clear warning)
+moderation.post('/sanctions/:id/revoke', requireRole('admin'), async (c) => {
+  const id        = c.req.param('id')
+  const adminUser = c.get('adminUser') as { id: string }
 
   const { error } = await supabase
-    .from('profiles')
-    .update({ suspended_until: null, suspension_reason: null })
+    .from('user_sanctions')
+    .update({ revoked_at: new Date().toISOString(), revoked_by: adminUser.id })
     .eq('id', id)
+    .is('revoked_at', null)
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })

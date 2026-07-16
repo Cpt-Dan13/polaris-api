@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono } from 'npm:hono@4'
 import { supabase } from '../../_shared/supabase.ts'
 import { requireRole } from '../../_shared/rbac.ts'
 
@@ -122,21 +122,32 @@ users.get('/:id/messages', requireRole('moderator'), async (c) => {
   return c.json({ data })
 })
 
+// GET /users/:id/sanctions
+// Returns active sanctions for a user (current moderation status)
+users.get('/:id/sanctions', requireRole('moderator'), async (c) => {
+  const id  = c.req.param('id')
+  const now = new Date().toISOString()
+
+  const { data, error } = await supabase
+    .from('user_sanctions')
+    .select('*, issued_by_admin:admin_users!issued_by(full_name)')
+    .eq('user_id', id)
+    .is('revoked_at', null)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
+    .order('issued_at', { ascending: false })
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ data })
+})
+
 // PATCH /users/:id
-// Update admin-controlled profile fields.
-// is_banned / ban_reason / banned_at / suspended_until / suspension_reason / admin_notes
-// require migration 20260717000001_add_moderation_columns to be run first.
+// Update admin-controlled profile fields (only is_paused for now — moderation actions use /sanctions)
 users.patch('/:id', requireRole('moderator'), async (c) => {
   const id   = c.req.param('id')
   const body = await c.req.json<Record<string, unknown>>()
 
-  const allowed = [
-    'is_paused',
-    'is_banned', 'ban_reason', 'banned_at',
-    'suspended_until', 'suspension_reason',
-    'admin_notes',
-  ]
-  const update = Object.fromEntries(
+  const allowed = ['is_paused']
+  const update  = Object.fromEntries(
     Object.entries(body).filter(([k]) => allowed.includes(k))
   )
 

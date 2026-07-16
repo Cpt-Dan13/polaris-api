@@ -1,4 +1,4 @@
-import type { Context, Next } from 'hono'
+import type { Context, Next } from 'npm:hono@4'
 
 export type AdminRole = 'viewer' | 'moderator' | 'support' | 'admin' | 'super_admin'
 

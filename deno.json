@@ -1,7 +1,7 @@
 {
   "imports": {
     "hono":                  "npm:hono@4",
-    "hono/cors":             "npm:hono@4/cors",
+    "hono/":                 "npm:hono@4/",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
   },
   "tasks": {
