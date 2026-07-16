@@ -380,9 +380,96 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     return { avg_age, mode_age }
   }
 
+  type HeightBucket = { label: string; maxIn: number }
+  type AgeBucket    = { label: string; min: number; max: number }
+
+  const PATRIARCH_H: HeightBucket[] = [
+    { label: "5'5\"",  maxIn: 65  },
+    { label: "5'6\"",  maxIn: 66  },
+    { label: "5'7\"",  maxIn: 67  },
+    { label: "5'8\"",  maxIn: 68  },
+    { label: "5'9\"",  maxIn: 69  },
+    { label: "5'10\"", maxIn: 70  },
+    { label: "6'0\"+", maxIn: 999 },
+  ]
+  const MUSE_H: HeightBucket[] = [
+    { label: "5'2\"",  maxIn: 62  },
+    { label: "5'3\"",  maxIn: 63  },
+    { label: "5'4\"",  maxIn: 64  },
+    { label: "5'5\"",  maxIn: 65  },
+    { label: "5'6\"",  maxIn: 66  },
+    { label: "5'7\"",  maxIn: 67  },
+    { label: "5'8\"+", maxIn: 999 },
+  ]
+  const PATRIARCH_A: AgeBucket[] = [
+    { label: '25–30', min: 25, max: 30 },
+    { label: '31–35', min: 31, max: 35 },
+    { label: '36–40', min: 36, max: 40 },
+    { label: '41–45', min: 41, max: 45 },
+    { label: '46–50', min: 46, max: 50 },
+    { label: '50+',   min: 51, max: 999 },
+  ]
+  const MUSE_A: AgeBucket[] = [
+    { label: '21–24', min: 21, max: 24 },
+    { label: '25–28', min: 25, max: 28 },
+    { label: '29–32', min: 29, max: 32 },
+    { label: '33–36', min: 33, max: 36 },
+    { label: '37–40', min: 37, max: 40 },
+    { label: '40+',   min: 41, max: 999 },
+  ]
+
+  function heightDist(gender: string) {
+    const buckets = gender === 'patriarch' ? PATRIARCH_H : MUSE_H
+    const counts  = new Array(buckets.length).fill(0)
+    let total = 0
+    for (const p of likedProfiles) {
+      if (p.gender !== gender || !p.height_cm) continue
+      const inches = Math.round(p.height_cm / 2.54)
+      const idx    = buckets.findIndex(b => inches <= b.maxIn)
+      if (idx === -1) continue
+      const l = likesFreq[p.id] ?? 0
+      counts[idx] += l
+      total += l
+    }
+    const dist = buckets.map((b, i) => ({
+      label: b.label,
+      pct:   total > 0 ? Math.round(counts[i] / total * 100) : 0,
+    }))
+    const mostIdx = dist.reduce((best, d, i) => d.pct > dist[best].pct ? i : best, 0)
+    return { dist, mostIdx }
+  }
+
+  function ageDist(gender: string) {
+    const buckets = gender === 'patriarch' ? PATRIARCH_A : MUSE_A
+    const counts  = new Array(buckets.length).fill(0)
+    let total = 0
+    const now = new Date()
+    for (const p of likedProfiles) {
+      if (p.gender !== gender || !p.date_of_birth) continue
+      const age = Math.floor((now.getTime() - new Date(p.date_of_birth).getTime()) / (365.25 * 86_400_000))
+      const idx = buckets.findIndex(b => age >= b.min && age <= b.max)
+      if (idx === -1) continue
+      const l = likesFreq[p.id] ?? 0
+      counts[idx] += l
+      total += l
+    }
+    const dist = buckets.map((b, i) => ({
+      label: b.label,
+      pct:   total > 0 ? Math.round(counts[i] / total * 100) : 0,
+    }))
+    const mostIdx = dist.reduce((best, d, i) => d.pct > dist[best].pct ? i : best, 0)
+    return { dist, mostIdx }
+  }
+
   return c.json({
-    patriarch: { ...heightStats('patriarch'), ...ageStats('patriarch') },
-    muse:      { ...heightStats('muse'),      ...ageStats('muse')      },
+    patriarch: {
+      ...heightStats('patriarch'), ...ageStats('patriarch'),
+      height_dist: heightDist('patriarch'), age_dist: ageDist('patriarch'),
+    },
+    muse: {
+      ...heightStats('muse'), ...ageStats('muse'),
+      height_dist: heightDist('muse'), age_dist: ageDist('muse'),
+    },
   })
 })
 
