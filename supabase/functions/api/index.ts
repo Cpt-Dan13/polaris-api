@@ -20,6 +20,9 @@ app.get('/health', (c) => c.json({ status: 'ok', version: '1.0.0' }))
 // All routes below this point require a valid admin JWT
 app.use('*', authMiddleware)
 
+// GET /api/me — returns the current admin user's profile
+app.get('/me', (c) => c.json({ data: c.get('adminUser') }))
+
 // ── Route groups ────────────────────────────────────────────────────────────
 
 app.route('/analytics',  analytics)
