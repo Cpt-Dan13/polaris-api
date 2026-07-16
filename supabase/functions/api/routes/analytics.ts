@@ -318,4 +318,72 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/profiles
+// Returns height/age stats derived from liked profiles (all-time, weighted by like count)
+analytics.get('/profiles', requireRole('viewer'), async (c) => {
+  // All individual likes, all time
+  const { data: allLikesRaw } = await supabase
+    .from('likes')
+    .select('liked_id')
+    .is('liker_constellation_id', null)
+
+  const likesFreq: Record<string, number> = {}
+  for (const r of allLikesRaw ?? []) {
+    likesFreq[r.liked_id] = (likesFreq[r.liked_id] ?? 0) + 1
+  }
+  const likedIds = Object.keys(likesFreq)
+
+  // Fetch height + gender for all liked profiles (chunked to stay under URL limits)
+  let likedProfiles: { id: string; height_cm: number | null; gender: string; date_of_birth: string }[] = []
+  if (likedIds.length > 0) {
+    const CHUNK = 200
+    for (let i = 0; i < likedIds.length; i += CHUNK) {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, height_cm, gender, date_of_birth')
+        .in('id', likedIds.slice(i, i + CHUNK))
+      likedProfiles = likedProfiles.concat(data ?? [])
+    }
+  }
+
+  function heightStats(gender: string) {
+    const freq: Record<number, number> = {}
+    let totalH = 0, totalL = 0
+    for (const p of likedProfiles) {
+      if (p.gender !== gender || !p.height_cm) continue
+      const l = likesFreq[p.id] ?? 0
+      totalH += p.height_cm * l
+      totalL += l
+      freq[p.height_cm] = (freq[p.height_cm] ?? 0) + l
+    }
+    const avg_cm  = totalL > 0 ? Math.round(totalH / totalL) : null
+    const modeEntry = Object.entries(freq).sort((a, b) => +b[1] - +a[1])[0]
+    const mode_cm = modeEntry ? +modeEntry[0] : null
+    return { avg_cm, mode_cm }
+  }
+
+  function ageStats(gender: string) {
+    const now = new Date()
+    const freq: Record<number, number> = {}
+    let totalA = 0, totalL = 0
+    for (const p of likedProfiles) {
+      if (p.gender !== gender || !p.date_of_birth) continue
+      const age = Math.floor((now.getTime() - new Date(p.date_of_birth).getTime()) / (365.25 * 86_400_000))
+      const l = likesFreq[p.id] ?? 0
+      totalA += age * l
+      totalL += l
+      freq[age] = (freq[age] ?? 0) + l
+    }
+    const avg_age  = totalL > 0 ? Math.round(totalA / totalL) : null
+    const modeEntry = Object.entries(freq).sort((a, b) => +b[1] - +a[1])[0]
+    const mode_age = modeEntry ? +modeEntry[0] : null
+    return { avg_age, mode_age }
+  }
+
+  return c.json({
+    patriarch: { ...heightStats('patriarch'), ...ageStats('patriarch') },
+    muse:      { ...heightStats('muse'),      ...ageStats('muse')      },
+  })
+})
+
 export default analytics
