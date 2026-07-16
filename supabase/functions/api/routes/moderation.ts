@@ -4,42 +4,116 @@ import { requireRole } from '../../_shared/rbac.ts'
 
 const moderation = new Hono()
 
-// ── Reports ────────────────────────────────────────────────────────────────
+// ── Reports ─────────────────────────────────────────────────────────────────
 
 // GET /moderation/reports
-// Returns user-submitted reports with optional status filter
+// Returns user-submitted reports with reporter + reported profile info
 moderation.get('/reports', requireRole('moderator'), async (c) => {
-  const status   = c.req.query('status')
-  const category = c.req.query('category')
-  const limit    = Number(c.req.query('limit') ?? 50)
+  const limit = Number(c.req.query('limit') ?? 50)
 
-  let query = supabase
+  const { data, error } = await supabase
     .from('reports')
-    .select('*, reporter:profiles!reporter_id(username, avatar_url), reported:profiles!reported_id(username, avatar_url)')
+    .select(`
+      id, reason, notes, created_at,
+      reporter:profiles!reporter_id(id, first_name, last_name, gender),
+      reported:profiles!reported_id(id, first_name, last_name, gender)
+    `)
     .order('created_at', { ascending: false })
     .limit(limit)
 
-  if (status)   query = query.eq('status', status)
-  if (category) query = query.eq('category', category)
-
-  const { data, error } = await query
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ data })
 })
 
-// PATCH /moderation/reports/:id
-// Update report status (open → investigating → resolved/dismissed)
-moderation.patch('/reports/:id', requireRole('moderator'), async (c) => {
+// GET /moderation/reports/:id
+// Returns a single report with full profile info
+moderation.get('/reports/:id', requireRole('moderator'), async (c) => {
+  const id = c.req.param('id')
+
+  const { data, error } = await supabase
+    .from('reports')
+    .select(`
+      id, reason, notes, created_at,
+      reporter:profiles!reporter_id(id, first_name, last_name, gender),
+      reported:profiles!reported_id(id, first_name, last_name, gender)
+    `)
+    .eq('id', id)
+    .single()
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ data })
+})
+
+// ── Flagged Messages ─────────────────────────────────────────────────────────
+
+// GET /moderation/flagged-messages
+// Returns messages flagged by the word-filter system
+moderation.get('/flagged-messages', requireRole('moderator'), async (c) => {
+  const limit = Number(c.req.query('limit') ?? 50)
+
+  const { data, error } = await supabase
+    .from('messages')
+    .select(`
+      id, content, flagged_words, flagged_at, created_at, match_id, chat_id,
+      sender:profiles!sender_id(id, first_name, last_name, gender)
+    `)
+    .eq('contains_flagged_words', true)
+    .eq('is_deleted', false)
+    .order('flagged_at', { ascending: false })
+    .limit(limit)
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ data })
+})
+
+// GET /moderation/flagged-messages/count
+// Returns total count of unreviewed flagged messages
+moderation.get('/flagged-messages/count', requireRole('moderator'), async (c) => {
+  const { count, error } = await supabase
+    .from('messages')
+    .select('*', { count: 'exact', head: true })
+    .eq('contains_flagged_words', true)
+    .eq('is_deleted', false)
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ count: count ?? 0 })
+})
+
+// ── Blocks ───────────────────────────────────────────────────────────────────
+
+// GET /moderation/blocks
+// Returns recent block events for pattern detection
+moderation.get('/blocks', requireRole('moderator'), async (c) => {
+  const limit = Number(c.req.query('limit') ?? 50)
+
+  const { data, error } = await supabase
+    .from('blocks')
+    .select(`
+      id, created_at,
+      blocker:profiles!blocker_id(id, first_name, last_name, gender),
+      blocked:profiles!blocked_id(id, first_name, last_name, gender)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ data })
+})
+
+// ── User Moderation Actions ───────────────────────────────────────────────────
+// These routes update columns added by migration 20260717000001_add_moderation_columns
+
+// POST /moderation/users/:id/ban
+moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
   const id   = c.req.param('id')
-  const body = await c.req.json<{ status: string; action?: string; notes?: string }>()
+  const body = await c.req.json<{ reason: string }>()
 
   const { error } = await supabase
-    .from('reports')
+    .from('profiles')
     .update({
-      status:     body.status,
-      action:     body.action,
-      notes:      body.notes,
-      updated_at: new Date().toISOString(),
+      is_banned:  true,
+      ban_reason: body.reason,
+      banned_at:  new Date().toISOString(),
     })
     .eq('id', id)
 
@@ -47,52 +121,14 @@ moderation.patch('/reports/:id', requireRole('moderator'), async (c) => {
   return c.json({ success: true })
 })
 
-// ── Chat Assessment ────────────────────────────────────────────────────────
-
-// GET /moderation/chat-flags
-// Returns AI-flagged conversation segments awaiting review
-moderation.get('/chat-flags', requireRole('moderator'), async (c) => {
-  const severity = c.req.query('severity')
-  const limit    = Number(c.req.query('limit') ?? 50)
-
-  let query = supabase
-    .from('chat_flags')
-    .select('*, message:messages(content, created_at), user:profiles!user_id(username, avatar_url)')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-
-  if (severity) query = query.eq('severity', severity)
-
-  const { data, error } = await query
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ data })
-})
-
-// PATCH /moderation/chat-flags/:id
-// Approve, escalate, or action a flagged message
-moderation.patch('/chat-flags/:id', requireRole('moderator'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<{ status: string; action?: string }>()
+// POST /moderation/users/:id/unban
+moderation.post('/users/:id/unban', requireRole('admin'), async (c) => {
+  const id = c.req.param('id')
 
   const { error } = await supabase
-    .from('chat_flags')
-    .update({ status: body.status, action: body.action, reviewed_at: new Date().toISOString() })
+    .from('profiles')
+    .update({ is_banned: false, ban_reason: null, banned_at: null })
     .eq('id', id)
-
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ success: true })
-})
-
-// ── User Actions ───────────────────────────────────────────────────────────
-
-// POST /moderation/users/:id/warn
-moderation.post('/users/:id/warn', requireRole('moderator'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<{ reason: string }>()
-
-  const { error } = await supabase
-    .from('user_warnings')
-    .insert({ user_id: id, reason: body.reason, issued_at: new Date().toISOString() })
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })
@@ -108,21 +144,20 @@ moderation.post('/users/:id/suspend', requireRole('admin'), async (c) => {
   const { error } = await supabase
     .from('profiles')
     .update({ suspended_until: until, suspension_reason: body.reason })
-    .eq('user_id', id)
+    .eq('id', id)
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true, suspended_until: until })
 })
 
-// POST /moderation/users/:id/ban
-moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<{ reason: string }>()
+// POST /moderation/users/:id/unsuspend
+moderation.post('/users/:id/unsuspend', requireRole('admin'), async (c) => {
+  const id = c.req.param('id')
 
   const { error } = await supabase
     .from('profiles')
-    .update({ banned: true, ban_reason: body.reason, banned_at: new Date().toISOString() })
-    .eq('user_id', id)
+    .update({ suspended_until: null, suspension_reason: null })
+    .eq('id', id)
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })
