@@ -319,32 +319,87 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
 })
 
 // GET /analytics/profiles
-// Returns height/age stats derived from liked profiles (all-time, weighted by like count)
+// Returns height/age stats, distributions, top performing, and most popular profiles
 analytics.get('/profiles', requireRole('viewer'), async (c) => {
-  // All individual likes, all time
-  const { data: allLikesRaw } = await supabase
-    .from('likes')
-    .select('liked_id')
-    .is('liker_constellation_id', null)
+  // Round 1: fetch all frequency source data in parallel
+  const [allLikesRes, allStarsRes, allViewsRes, patriarchRes, museRes] = await Promise.all([
+    supabase.from('likes').select('liked_id').is('liker_constellation_id', null),
+    supabase.from('profile_stars').select('starred_id'),
+    supabase.from('profile_views').select('viewed_id'),
+    supabase.from('profiles').select('id').eq('gender', 'patriarch'),
+    supabase.from('profiles').select('id').eq('gender', 'muse'),
+  ])
 
   const likesFreq: Record<string, number> = {}
-  for (const r of allLikesRaw ?? []) {
+  for (const r of allLikesRes.data ?? []) {
     likesFreq[r.liked_id] = (likesFreq[r.liked_id] ?? 0) + 1
   }
+  const starsFreq: Record<string, number> = {}
+  for (const r of allStarsRes.data ?? []) {
+    starsFreq[r.starred_id] = (starsFreq[r.starred_id] ?? 0) + 1
+  }
+  const viewsFreq: Record<string, number> = {}
+  for (const r of allViewsRes.data ?? []) {
+    viewsFreq[r.viewed_id] = (viewsFreq[r.viewed_id] ?? 0) + 1
+  }
+
+  const pIds   = (patriarchRes.data ?? []).map((p: { id: string }) => p.id)
+  const mIds   = (museRes.data      ?? []).map((p: { id: string }) => p.id)
+  const pIdSet = new Set(pIds)
+  const mIdSet = new Set(mIds)
   const likedIds = Object.keys(likesFreq)
 
-  // Fetch height + gender for all liked profiles (chunked to stay under URL limits)
+  // Ranking helpers — run before round-2 fetch so we know which names to load
+  function topPerformingIds(idSet: Set<string>, n = 3): string[] {
+    return [...idSet]
+      .filter(id => (starsFreq[id] ?? 0) > 0 || (likesFreq[id] ?? 0) > 0)
+      .sort((a, b) =>
+        ((starsFreq[b] ?? 0) - (starsFreq[a] ?? 0)) ||
+        ((likesFreq[b] ?? 0) - (likesFreq[a] ?? 0))
+      )
+      .slice(0, n)
+  }
+
+  function mostPopularIds(idSet: Set<string>, n = 3): string[] {
+    return [...idSet]
+      .filter(id => (viewsFreq[id] ?? 0) > 0)
+      .sort((a, b) => (viewsFreq[b] ?? 0) - (viewsFreq[a] ?? 0))
+      .slice(0, n)
+  }
+
+  const pTopIds = topPerformingIds(pIdSet)
+  const mTopIds = topPerformingIds(mIdSet)
+  const pPopIds = mostPopularIds(pIdSet)
+  const mPopIds = mostPopularIds(mIdSet)
+  const nameIds = [...new Set([...pTopIds, ...mTopIds, ...pPopIds, ...mPopIds])]
+
+  // Round 2: liked-profile details (for stats/dist) + top-profile names — parallel
   let likedProfiles: { id: string; height_cm: number | null; gender: string; date_of_birth: string }[] = []
-  if (likedIds.length > 0) {
-    const CHUNK = 200
-    for (let i = 0; i < likedIds.length; i += CHUNK) {
-      const { data } = await supabase
-        .from('profiles')
+  const profileNamesMap: Record<string, { first_name: string; last_name: string | null }> = {}
+
+  const CHUNK = 200
+  const likedFetches: Promise<void>[] = []
+  for (let i = 0; i < likedIds.length; i += CHUNK) {
+    likedFetches.push(
+      supabase.from('profiles')
         .select('id, height_cm, gender, date_of_birth')
         .in('id', likedIds.slice(i, i + CHUNK))
-      likedProfiles = likedProfiles.concat(data ?? [])
-    }
+        .then(({ data }) => { likedProfiles = likedProfiles.concat(data ?? []) })
+    )
   }
+
+  const namesFetch = nameIds.length > 0
+    ? supabase.from('profiles').select('id, first_name, last_name').in('id', nameIds)
+        .then(({ data }) => {
+          for (const p of data ?? []) {
+            profileNamesMap[p.id] = { first_name: p.first_name, last_name: p.last_name }
+          }
+        })
+    : Promise.resolve()
+
+  await Promise.all([...likedFetches, namesFetch])
+
+  // ── Stats / distribution helpers ─────────────────────────────────────────────
 
   function heightStats(gender: string) {
     const freq: Record<number, number> = {}
@@ -461,14 +516,53 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     return { dist, mostIdx }
   }
 
+  // ── Ranking builders ─────────────────────────────────────────────────────────
+
+  function getName(id: string): string {
+    const p = profileNamesMap[id]
+    if (!p) return id
+    return p.last_name ? `${p.first_name} ${p.last_name}` : p.first_name
+  }
+
+  function getInitials(id: string): string {
+    const p = profileNamesMap[id]
+    if (!p) return '?'
+    return ((p.first_name?.[0] ?? '') + (p.last_name?.[0] ?? '')).toUpperCase()
+  }
+
+  function buildTopPerforming(ids: string[]) {
+    return ids.map(id => ({
+      id,
+      name:     getName(id),
+      initials: getInitials(id),
+      stars:    starsFreq[id] ?? 0,
+      likes:    likesFreq[id] ?? 0,
+    }))
+  }
+
+  function buildMostPopular(ids: string[]) {
+    return ids.map(id => ({
+      id,
+      name:     getName(id),
+      initials: getInitials(id),
+      views:    viewsFreq[id] ?? 0,
+    }))
+  }
+
   return c.json({
     patriarch: {
       ...heightStats('patriarch'), ...ageStats('patriarch'),
-      height_dist: heightDist('patriarch'), age_dist: ageDist('patriarch'),
+      height_dist:    heightDist('patriarch'),
+      age_dist:       ageDist('patriarch'),
+      top_performing: buildTopPerforming(pTopIds),
+      most_popular:   buildMostPopular(pPopIds),
     },
     muse: {
       ...heightStats('muse'), ...ageStats('muse'),
-      height_dist: heightDist('muse'), age_dist: ageDist('muse'),
+      height_dist:    heightDist('muse'),
+      age_dist:       ageDist('muse'),
+      top_performing: buildTopPerforming(mTopIds),
+      most_popular:   buildMostPopular(mPopIds),
     },
   })
 })
