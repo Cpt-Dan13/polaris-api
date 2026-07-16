@@ -238,6 +238,56 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
       .sort((a: { likes: number }, b: { likes: number }) => b.likes - a.likes)
   }
 
+  // ── By user type ─────────────────────────────────────────────────────────────
+  const [patriarchRes, museRes] = await Promise.all([
+    supabase.from('profiles').select('id').eq('gender', 'patriarch'),
+    supabase.from('profiles').select('id').eq('gender', 'muse'),
+  ])
+
+  const pIds = (patriarchRes.data ?? []).map((p: { id: string }) => p.id)
+  const mIds = (museRes.data ?? []).map((p: { id: string }) => p.id)
+
+  const none = { count: 0 }
+
+  const [pLikes, pPasses, mLikes, mPasses, cLikes, cPasses, cMatches, indivMatches] = await Promise.all([
+    pIds.length ? supabase.from('likes').select('id', { count: 'exact', head: true }).in('liker_id', pIds).is('liker_constellation_id', null)  : none,
+    pIds.length ? supabase.from('passes').select('id', { count: 'exact', head: true }).in('passer_id', pIds)                                    : none,
+    mIds.length ? supabase.from('likes').select('id', { count: 'exact', head: true }).in('liker_id', mIds).is('liker_constellation_id', null)  : none,
+    mIds.length ? supabase.from('passes').select('id', { count: 'exact', head: true }).in('passer_id', mIds)                                   : none,
+    supabase.from('constellation_group_interactions').select('id', { count: 'exact', head: true }).eq('action', 'like'),
+    supabase.from('constellation_group_interactions').select('id', { count: 'exact', head: true }).eq('action', 'pass'),
+    supabase.from('matches').select('id', { count: 'exact', head: true }).not('liker_constellation_id', 'is', null),
+    supabase.from('matches').select('id', { count: 'exact', head: true }).is('liker_constellation_id', null),
+  ])
+
+  const pL  = pLikes.count  ?? 0,  pP  = pPasses.count ?? 0
+  const mL  = mLikes.count  ?? 0,  mP  = mPasses.count ?? 0
+  const cL  = cLikes.count  ?? 0,  cP  = cPasses.count ?? 0
+  const cM  = cMatches.count ?? 0, iM  = indivMatches.count ?? 0
+
+  function rate(a: number, b: number) { return b > 0 ? +(a / b * 100).toFixed(1) : 0 }
+
+  const byType = {
+    patriarch: {
+      swipes:     pL + pP,
+      like_rate:  rate(pL, pL + pP),
+      match_rate: rate(iM, pL),
+      avg_daily:  Math.round((pL + pP) / 30),
+    },
+    muse: {
+      swipes:     mL + mP,
+      like_rate:  rate(mL, mL + mP),
+      match_rate: rate(iM, mL),
+      avg_daily:  Math.round((mL + mP) / 30),
+    },
+    constellation: {
+      swipes:     cL + cP,
+      like_rate:  rate(cL, cL + cP),
+      match_rate: rate(cM, cL),
+      avg_daily:  Math.round((cL + cP) / 30),
+    },
+  }
+
   return c.json({
     kpis: {
       total_swipes_today: totalSwipesToday,
@@ -264,6 +314,7 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
     },
     hourly,
     top_liked: topLiked,
+    by_type:   byType,
   })
 })
 
