@@ -1,0 +1,32 @@
+# A string used to distinguish different Supabase projects on the same host.
+# Defaults to the working directory name when running supabase init.
+project_id = "polaris-api"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+jwt_expiry = 3600
+enable_signup = false
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"
+
+[functions.api]
+verify_jwt = false
