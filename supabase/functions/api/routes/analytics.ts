@@ -322,10 +322,13 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
 // Returns height/age stats, distributions, top performing, and most popular profiles
 analytics.get('/profiles', requireRole('viewer'), async (c) => {
   // Round 1: fetch all frequency source data in parallel
-  const [allLikesRes, allStarsRes, allViewsRes, patriarchRes, museRes] = await Promise.all([
+  const [allLikesRes, allStarsRes, allViewsRes, allPassesRxRes, allReportsRes, allBlocksRes, patriarchRes, museRes] = await Promise.all([
     supabase.from('likes').select('liked_id').is('liker_constellation_id', null),
     supabase.from('profile_stars').select('starred_id'),
     supabase.from('profile_views').select('viewed_id'),
+    supabase.from('passes').select('passed_id'),
+    supabase.from('reports').select('reported_id'),
+    supabase.from('blocks').select('blocked_id'),
     supabase.from('profiles').select('id').eq('gender', 'patriarch'),
     supabase.from('profiles').select('id').eq('gender', 'muse'),
   ])
@@ -341,6 +344,18 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   const viewsFreq: Record<string, number> = {}
   for (const r of allViewsRes.data ?? []) {
     viewsFreq[r.viewed_id] = (viewsFreq[r.viewed_id] ?? 0) + 1
+  }
+  const passesRxFreq: Record<string, number> = {}
+  for (const r of allPassesRxRes.data ?? []) {
+    passesRxFreq[r.passed_id] = (passesRxFreq[r.passed_id] ?? 0) + 1
+  }
+  const reportsFreq: Record<string, number> = {}
+  for (const r of allReportsRes.data ?? []) {
+    reportsFreq[r.reported_id] = (reportsFreq[r.reported_id] ?? 0) + 1
+  }
+  const blocksFreq: Record<string, number> = {}
+  for (const r of allBlocksRes.data ?? []) {
+    blocksFreq[r.blocked_id] = (blocksFreq[r.blocked_id] ?? 0) + 1
   }
 
   const pIds   = (patriarchRes.data ?? []).map((p: { id: string }) => p.id)
@@ -367,11 +382,33 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       .slice(0, n)
   }
 
-  const pTopIds = topPerformingIds(pIdSet)
-  const mTopIds = topPerformingIds(mIdSet)
-  const pPopIds = mostPopularIds(pIdSet)
-  const mPopIds = mostPopularIds(mIdSet)
-  const nameIds = [...new Set([...pTopIds, ...mTopIds, ...pPopIds, ...mPopIds])]
+  function mostDislikedIds(idSet: Set<string>, n = 3): string[] {
+    return [...idSet]
+      .filter(id => (passesRxFreq[id] ?? 0) > 0)
+      .sort((a, b) => (passesRxFreq[b] ?? 0) - (passesRxFreq[a] ?? 0))
+      .slice(0, n)
+  }
+
+  function mostReportedIds(idSet: Set<string>, n = 3): string[] {
+    return [...idSet]
+      .filter(id => (reportsFreq[id] ?? 0) > 0)
+      .sort((a, b) => (reportsFreq[b] ?? 0) - (reportsFreq[a] ?? 0))
+      .slice(0, n)
+  }
+
+  const pTopIds      = topPerformingIds(pIdSet)
+  const mTopIds      = topPerformingIds(mIdSet)
+  const pPopIds      = mostPopularIds(pIdSet)
+  const mPopIds      = mostPopularIds(mIdSet)
+  const pDislikedIds = mostDislikedIds(pIdSet)
+  const mDislikedIds = mostDislikedIds(mIdSet)
+  const pReportedIds = mostReportedIds(pIdSet)
+  const mReportedIds = mostReportedIds(mIdSet)
+
+  const nameIds = [...new Set([
+    ...pTopIds, ...mTopIds, ...pPopIds, ...mPopIds,
+    ...pDislikedIds, ...mDislikedIds, ...pReportedIds, ...mReportedIds,
+  ])]
 
   // Round 2: liked-profile details (for stats/dist) + top-profile names — parallel
   let likedProfiles: { id: string; height_cm: number | null; gender: string; date_of_birth: string }[] = []
@@ -549,6 +586,29 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     }))
   }
 
+  function buildMostDisliked(ids: string[]) {
+    return ids.map(id => ({
+      id,
+      name:   getName(id),
+      passes: passesRxFreq[id] ?? 0,
+    }))
+  }
+
+  function buildMostReported(ids: string[]) {
+    return ids.map(id => {
+      const reports  = reportsFreq[id] ?? 0
+      const blocks   = blocksFreq[id]  ?? 0
+      const severity = reports >= 20 ? 'high' : reports >= 10 ? 'medium' : 'low'
+      return {
+        id,
+        name:     getName(id),
+        reports,
+        blocks,
+        severity,
+      }
+    })
+  }
+
   return c.json({
     patriarch: {
       ...heightStats('patriarch'), ...ageStats('patriarch'),
@@ -556,6 +616,8 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       age_dist:       ageDist('patriarch'),
       top_performing: buildTopPerforming(pTopIds),
       most_popular:   buildMostPopular(pPopIds),
+      most_disliked:  buildMostDisliked(pDislikedIds),
+      most_reported:  buildMostReported(pReportedIds),
     },
     muse: {
       ...heightStats('muse'), ...ageStats('muse'),
@@ -563,6 +625,8 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       age_dist:       ageDist('muse'),
       top_performing: buildTopPerforming(mTopIds),
       most_popular:   buildMostPopular(mPopIds),
+      most_disliked:  buildMostDisliked(mDislikedIds),
+      most_reported:  buildMostReported(mReportedIds),
     },
   })
 })
