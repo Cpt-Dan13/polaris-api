@@ -329,8 +329,8 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     supabase.from('passes').select('passed_id'),
     supabase.from('reports').select('reported_id'),
     supabase.from('blocks').select('blocked_id'),
-    supabase.from('profiles').select('id').eq('gender', 'patriarch'),
-    supabase.from('profiles').select('id').eq('gender', 'muse'),
+    supabase.from('profiles').select('id, ethnicity').eq('gender', 'patriarch'),
+    supabase.from('profiles').select('id, ethnicity').eq('gender', 'muse'),
   ])
 
   const likesFreq: Record<string, number> = {}
@@ -358,10 +358,41 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     blocksFreq[r.blocked_id] = (blocksFreq[r.blocked_id] ?? 0) + 1
   }
 
-  const pIds   = (patriarchRes.data ?? []).map((p: { id: string }) => p.id)
-  const mIds   = (museRes.data      ?? []).map((p: { id: string }) => p.id)
+  type GenderProfile = { id: string; ethnicity: string | null }
+  const pProfiles = (patriarchRes.data ?? []) as GenderProfile[]
+  const mProfiles = (museRes.data      ?? []) as GenderProfile[]
+  const pIds   = pProfiles.map(p => p.id)
+  const mIds   = mProfiles.map(p => p.id)
   const pIdSet = new Set(pIds)
   const mIdSet = new Set(mIds)
+
+  const ETHNICITY_LABEL: Record<string, string> = {
+    black_african:    'Black / African Descent',
+    east_asian:       'East Asian',
+    hispanic_latino:       'Hispanic / Latino',
+    middle_eastern:        'Middle Eastern',
+    native_american:       'Native American',
+    pacific_islander:      'Pacific Islander',
+    south_asian:           'South Asian',
+    southeast_asian:       'Southeast Asian',
+    white_caucasian:       'White / Caucasian',
+    other:                 'Other',
+  }
+
+  function ethnicityDist(profiles: GenderProfile[]) {
+    const counts: Record<string, number> = {}
+    for (const p of profiles) {
+      const label = (p.ethnicity && ETHNICITY_LABEL[p.ethnicity]) ?? 'Other'
+      counts[label] = (counts[label] ?? 0) + 1
+    }
+    const total = profiles.length
+    return Object.entries(counts)
+      .map(([label, count]) => ({
+        label,
+        pct: total > 0 ? Math.round(count / total * 100) : 0,
+      }))
+      .sort((a, b) => b.pct - a.pct)
+  }
   const likedIds = Object.keys(likesFreq)
 
   // Ranking helpers — run before round-2 fetch so we know which names to load
@@ -612,21 +643,23 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   return c.json({
     patriarch: {
       ...heightStats('patriarch'), ...ageStats('patriarch'),
-      height_dist:    heightDist('patriarch'),
-      age_dist:       ageDist('patriarch'),
-      top_performing: buildTopPerforming(pTopIds),
-      most_popular:   buildMostPopular(pPopIds),
-      most_disliked:  buildMostDisliked(pDislikedIds),
-      most_reported:  buildMostReported(pReportedIds),
+      height_dist:     heightDist('patriarch'),
+      age_dist:        ageDist('patriarch'),
+      ethnicity_dist:  ethnicityDist(pProfiles),
+      top_performing:  buildTopPerforming(pTopIds),
+      most_popular:    buildMostPopular(pPopIds),
+      most_disliked:   buildMostDisliked(pDislikedIds),
+      most_reported:   buildMostReported(pReportedIds),
     },
     muse: {
       ...heightStats('muse'), ...ageStats('muse'),
-      height_dist:    heightDist('muse'),
-      age_dist:       ageDist('muse'),
-      top_performing: buildTopPerforming(mTopIds),
-      most_popular:   buildMostPopular(mPopIds),
-      most_disliked:  buildMostDisliked(mDislikedIds),
-      most_reported:  buildMostReported(mReportedIds),
+      height_dist:     heightDist('muse'),
+      age_dist:        ageDist('muse'),
+      ethnicity_dist:  ethnicityDist(mProfiles),
+      top_performing:  buildTopPerforming(mTopIds),
+      most_popular:    buildMostPopular(mPopIds),
+      most_disliked:   buildMostDisliked(mDislikedIds),
+      most_reported:   buildMostReported(mReportedIds),
     },
   })
 })
