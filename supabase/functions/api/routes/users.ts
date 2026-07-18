@@ -44,7 +44,7 @@ users.get('/summary/counts', requireRole('viewer'), async (c) => {
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('gender', 'muse'),
     supabase.from('subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('is_paused', true),
-    supabase.from('family_dynamics').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('constellations').select('*', { count: 'exact', head: true }).eq('is_active', true),
   ])
 
   return c.json({
