@@ -640,6 +640,62 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     })
   }
 
+  // ── Constellation analytics ───────────────────────────────────────────────
+  const [cStarsRes, cLikesRes, cViewsRes] = await Promise.all([
+    supabase.from('constellation_stars').select('dynamic_id'),
+    supabase.from('likes').select('liked_constellation_id').not('liked_constellation_id', 'is', null),
+    supabase.from('constellation_views').select('constellation_id'),
+  ])
+
+  const cStarsFreq: Record<string, number> = {}
+  for (const r of cStarsRes.data ?? []) {
+    cStarsFreq[r.dynamic_id] = (cStarsFreq[r.dynamic_id] ?? 0) + 1
+  }
+  const cLikesFreq: Record<string, number> = {}
+  for (const r of cLikesRes.data ?? []) {
+    cLikesFreq[r.liked_constellation_id] = (cLikesFreq[r.liked_constellation_id] ?? 0) + 1
+  }
+  const cViewsFreq: Record<string, number> = {}
+  for (const r of cViewsRes.data ?? []) {
+    cViewsFreq[r.constellation_id] = (cViewsFreq[r.constellation_id] ?? 0) + 1
+  }
+
+  const cTopIds = [...new Set([...Object.keys(cStarsFreq), ...Object.keys(cLikesFreq)])]
+    .sort((a, b) =>
+      ((cStarsFreq[b] ?? 0) - (cStarsFreq[a] ?? 0)) ||
+      ((cLikesFreq[b] ?? 0) - (cLikesFreq[a] ?? 0))
+    )
+    .slice(0, 3)
+
+  const cPopIds = Object.keys(cViewsFreq)
+    .sort((a, b) => (cViewsFreq[b] ?? 0) - (cViewsFreq[a] ?? 0))
+    .slice(0, 3)
+
+  const cAllIds = [...new Set([...cTopIds, ...cPopIds])]
+
+  const cNameMap: Record<string, string> = {}
+  const cMemberMap: Record<string, number> = {}
+
+  if (cAllIds.length > 0) {
+    const [cNamesRes, cMembersRes] = await Promise.all([
+      supabase.from('constellations').select('id, name').in('id', cAllIds),
+      supabase.from('constellation_members').select('dynamic_id').in('dynamic_id', cAllIds),
+    ])
+    for (const c of cNamesRes.data ?? []) {
+      cNameMap[c.id] = c.name || 'Unnamed'
+    }
+    for (const m of cMembersRes.data ?? []) {
+      cMemberMap[m.dynamic_id] = (cMemberMap[m.dynamic_id] ?? 0) + 1
+    }
+  }
+
+  function getConstInitials(id: string): string {
+    const words = (cNameMap[id] ?? '').trim().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return '?'
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+    return (words[0][0] + words[words.length - 1][0]).toUpperCase()
+  }
+
   return c.json({
     patriarch: {
       ...heightStats('patriarch'), ...ageStats('patriarch'),
@@ -660,6 +716,23 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       most_popular:    buildMostPopular(mPopIds),
       most_disliked:   buildMostDisliked(mDislikedIds),
       most_reported:   buildMostReported(mReportedIds),
+    },
+    constellation: {
+      top_performing: cTopIds.map(id => ({
+        id,
+        name:         cNameMap[id] ?? 'Unnamed',
+        initials:     getConstInitials(id),
+        member_count: cMemberMap[id] ?? 0,
+        stars:        cStarsFreq[id] ?? 0,
+        likes:        cLikesFreq[id] ?? 0,
+      })),
+      most_popular: cPopIds.map(id => ({
+        id,
+        name:         cNameMap[id] ?? 'Unnamed',
+        initials:     getConstInitials(id),
+        member_count: cMemberMap[id] ?? 0,
+        views:        cViewsFreq[id] ?? 0,
+      })),
     },
   })
 })
