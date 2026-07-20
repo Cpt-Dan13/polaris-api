@@ -444,6 +444,7 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   // Round 2: liked-profile details (for stats/dist) + top-profile names — parallel
   let likedProfiles: { id: string; height_cm: number | null; gender: string; date_of_birth: string }[] = []
   const profileNamesMap: Record<string, { first_name: string; last_name: string | null }> = {}
+  const photoMap: Record<string, string> = {}
 
   const CHUNK = 200
   const likedFetches: Promise<void>[] = []
@@ -465,7 +466,16 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
         })
     : Promise.resolve()
 
-  await Promise.all([...likedFetches, namesFetch])
+  const photosFetch = nameIds.length > 0
+    ? supabase.from('photos').select('user_id, url, order_index').in('user_id', nameIds).order('order_index')
+        .then(({ data }) => {
+          for (const photo of data ?? []) {
+            if (!photoMap[photo.user_id]) photoMap[photo.user_id] = photo.url
+          }
+        })
+    : Promise.resolve()
+
+  await Promise.all([...likedFetches, namesFetch, photosFetch])
 
   // ── Stats / distribution helpers ─────────────────────────────────────────────
 
@@ -598,30 +608,38 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     return ((p.first_name?.[0] ?? '') + (p.last_name?.[0] ?? '')).toUpperCase()
   }
 
+  function getPhoto(id: string): string | null {
+    return photoMap[id] ?? null
+  }
+
   function buildTopPerforming(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:     getName(id),
-      initials: getInitials(id),
-      stars:    starsFreq[id] ?? 0,
-      likes:    likesFreq[id] ?? 0,
+      name:      getName(id),
+      initials:  getInitials(id),
+      photo_url: getPhoto(id),
+      stars:     starsFreq[id] ?? 0,
+      likes:     likesFreq[id] ?? 0,
     }))
   }
 
   function buildMostPopular(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:     getName(id),
-      initials: getInitials(id),
-      views:    viewsFreq[id] ?? 0,
+      name:      getName(id),
+      initials:  getInitials(id),
+      photo_url: getPhoto(id),
+      views:     viewsFreq[id] ?? 0,
     }))
   }
 
   function buildMostDisliked(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:   getName(id),
-      passes: passesRxFreq[id] ?? 0,
+      name:      getName(id),
+      initials:  getInitials(id),
+      photo_url: getPhoto(id),
+      passes:    passesRxFreq[id] ?? 0,
     }))
   }
 
@@ -632,7 +650,9 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       const severity = reports >= 20 ? 'high' : reports >= 10 ? 'medium' : 'low'
       return {
         id,
-        name:     getName(id),
+        name:      getName(id),
+        initials:  getInitials(id),
+        photo_url: getPhoto(id),
         reports,
         blocks,
         severity,
