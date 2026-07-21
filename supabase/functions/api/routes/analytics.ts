@@ -926,4 +926,97 @@ analytics.get('/insights', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/insights/correlations
+// Computes lift ratios for each attribute (has attribute vs. doesn't)
+analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+
+  const [
+    profilesRes,
+    promptUsersRes,
+    subscriptionsRes,
+    likesRes,
+    matchesRes,
+    recentViewersRes,
+  ] = await Promise.all([
+    supabase.from('profiles').select('id, bio, religion, politics, ethnicity, has_children, drinking, smoking, marijuana, drugs, height_cm'),
+    supabase.from('prompt_answers').select('user_id'),
+    supabase.from('subscriptions').select('user_id').eq('status', 'active'),
+    supabase.from('likes').select('liked_id').is('liked_constellation_id', null),
+    supabase.from('matches').select('user1_id, user2_id').eq('status', 'active'),
+    supabase.from('profile_views').select('viewer_id').gte('created_at', thirtyDaysAgo),
+  ])
+
+  // ── Frequency maps ────────────────────────────────────────────────────────
+  const likesFreq: Record<string, number> = {}
+  for (const l of likesRes.data ?? []) {
+    likesFreq[l.liked_id] = (likesFreq[l.liked_id] ?? 0) + 1
+  }
+
+  const matchesFreq: Record<string, number> = {}
+  for (const m of matchesRes.data ?? []) {
+    matchesFreq[m.user1_id] = (matchesFreq[m.user1_id] ?? 0) + 1
+    matchesFreq[m.user2_id] = (matchesFreq[m.user2_id] ?? 0) + 1
+  }
+
+  const promptUserIds    = new Set<string>((promptUsersRes.data   ?? []).map(p => p.user_id))
+  const premiumUserIds   = new Set<string>((subscriptionsRes.data ?? []).map(s => s.user_id))
+  const recentViewerIds  = new Set<string>((recentViewersRes.data ?? []).map(v => v.viewer_id))
+
+  const profiles = profilesRes.data ?? []
+  const allIds   = profiles.map(p => p.id)
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function avgMetric(ids: string[], freq: Record<string, number>): number {
+    if (ids.length === 0) return 0
+    return ids.reduce((sum, id) => sum + (freq[id] ?? 0), 0) / ids.length
+  }
+
+  function lift(groupA: string[], groupB: string[], freq: Record<string, number>): number | null {
+    const avgB = avgMetric(groupB, freq)
+    if (avgB === 0 || groupA.length === 0 || groupB.length === 0) return null
+    return +(avgMetric(groupA, freq) / avgB).toFixed(2)
+  }
+
+  // ── Per-attribute splits ──────────────────────────────────────────────────
+  const withPrompts    = allIds.filter(id =>  promptUserIds.has(id))
+  const withoutPrompts = allIds.filter(id => !promptUserIds.has(id))
+
+  const withBio    = profiles.filter(p => (p.bio?.length ?? 0) > 80).map(p => p.id)
+  const withoutBio = profiles.filter(p => (p.bio?.length ?? 0) <= 80).map(p => p.id)
+
+  const withPremium    = allIds.filter(id =>  premiumUserIds.has(id))
+  const withoutPremium = allIds.filter(id => !premiumUserIds.has(id))
+
+  const withValues    = profiles.filter(p =>  p.religion && p.politics).map(p => p.id)
+  const withoutValues = profiles.filter(p => !p.religion || !p.politics).map(p => p.id)
+
+  const activeRecently   = allIds.filter(id =>  recentViewerIds.has(id))
+  const inactiveRecently = allIds.filter(id => !recentViewerIds.has(id))
+
+  const withEthnicity    = profiles.filter(p =>  p.ethnicity).map(p => p.id)
+  const withoutEthnicity = profiles.filter(p => !p.ethnicity).map(p => p.id)
+
+  const withChildren    = profiles.filter(p =>  p.has_children).map(p => p.id)
+  const withoutChildren = profiles.filter(p => !p.has_children).map(p => p.id)
+
+  const withVices    = profiles.filter(p =>  p.drinking && p.smoking && p.marijuana && p.drugs).map(p => p.id)
+  const withoutVices = profiles.filter(p => !p.drinking || !p.smoking || !p.marijuana || !p.drugs).map(p => p.id)
+
+  const withHeight    = profiles.filter(p =>  p.height_cm).map(p => p.id)
+  const withoutHeight = profiles.filter(p => !p.height_cm).map(p => p.id)
+
+  return c.json({
+    prompt_answers:    lift(withPrompts,        withoutPrompts,    likesFreq),
+    bio_length:        lift(withBio,            withoutBio,        likesFreq),
+    premium:           lift(withPremium,        withoutPremium,    matchesFreq),
+    religion_politics: lift(withValues,         withoutValues,     matchesFreq),
+    active_30d:        lift(activeRecently,     inactiveRecently,  likesFreq),
+    ethnicity:         lift(withEthnicity,      withoutEthnicity,  likesFreq),
+    has_children:      lift(withChildren,       withoutChildren,   matchesFreq),
+    vices:             lift(withVices,          withoutVices,      matchesFreq),
+    height:            lift(withHeight,         withoutHeight,     likesFreq),
+  })
+})
+
 export default analytics
