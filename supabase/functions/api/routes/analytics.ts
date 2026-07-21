@@ -716,16 +716,18 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
 
   const cAllIds = [...new Set([...cTopIds, ...cPopIds, ...cReportedIds, ...cDislikedIds])]
 
-  const cNameMap: Record<string, string> = {}
-  const cMemberMap: Record<string, number> = {}
+  const cNameMap:   Record<string, string>      = {}
+  const cMemberMap: Record<string, number>      = {}
+  const cPhotoMap:  Record<string, string|null> = {}
 
   if (cAllIds.length > 0) {
     const [cNamesRes, cMembersRes] = await Promise.all([
-      supabase.from('constellations').select('id, name').in('id', cAllIds),
+      supabase.from('constellations').select('id, name, profile_photo_url').in('id', cAllIds),
       supabase.from('constellation_members').select('dynamic_id').in('dynamic_id', cAllIds),
     ])
     for (const c of cNamesRes.data ?? []) {
-      cNameMap[c.id] = c.name || 'Unnamed'
+      cNameMap[c.id]  = c.name              || 'Unnamed'
+      cPhotoMap[c.id] = c.profile_photo_url ?? null
     }
     for (const m of cMembersRes.data ?? []) {
       cMemberMap[m.dynamic_id] = (cMemberMap[m.dynamic_id] ?? 0) + 1
@@ -763,16 +765,18 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     constellation: {
       top_performing: cTopIds.map(id => ({
         id,
-        name:         cNameMap[id] ?? 'Unnamed',
+        name:         cNameMap[id]   ?? 'Unnamed',
         initials:     getConstInitials(id),
+        photo_url:    cPhotoMap[id]  ?? null,
         member_count: cMemberMap[id] ?? 0,
         stars:        cStarsFreq[id] ?? 0,
         likes:        cLikesFreq[id] ?? 0,
       })),
       most_popular: cPopIds.map(id => ({
         id,
-        name:         cNameMap[id] ?? 'Unnamed',
+        name:         cNameMap[id]   ?? 'Unnamed',
         initials:     getConstInitials(id),
+        photo_url:    cPhotoMap[id]  ?? null,
         member_count: cMemberMap[id] ?? 0,
         views:        cViewsFreq[id] ?? 0,
       })),
@@ -784,20 +788,20 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
           id,
           name:         cNameMap[id]   ?? 'Unnamed',
           initials:     getConstInitials(id),
+          photo_url:    cPhotoMap[id]  ?? null,
           member_count: cMemberMap[id] ?? 0,
           reports,
           blocks,
           severity,
-          photo_url:    null,
         }
       }),
       most_disliked: cDislikedIds.map(id => ({
         id,
         name:         cNameMap[id]    ?? 'Unnamed',
         initials:     getConstInitials(id),
+        photo_url:    cPhotoMap[id]   ?? null,
         member_count: cMemberMap[id]  ?? 0,
         passes:       cPassesFreq[id] ?? 0,
-        photo_url:    null,
       })),
     },
   })
