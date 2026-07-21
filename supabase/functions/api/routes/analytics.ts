@@ -661,10 +661,13 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   }
 
   // ── Constellation analytics ───────────────────────────────────────────────
-  const [cStarsRes, cLikesRes, cViewsRes] = await Promise.all([
+  const [cStarsRes, cLikesRes, cViewsRes, cReportsRes, cConstBlocksRes, cPassesRes] = await Promise.all([
     supabase.from('constellation_stars').select('dynamic_id'),
     supabase.from('likes').select('liked_constellation_id').not('liked_constellation_id', 'is', null),
     supabase.from('constellation_views').select('constellation_id'),
+    supabase.from('constellation_reports').select('reported_constellation_id'),
+    supabase.from('individual_constellation_blocks').select('blocked_constellation_id'),
+    supabase.from('constellation_group_interactions').select('target_dynamic_id').eq('action', 'pass').not('target_dynamic_id', 'is', null),
   ])
 
   const cStarsFreq: Record<string, number> = {}
@@ -679,6 +682,18 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   for (const r of cViewsRes.data ?? []) {
     cViewsFreq[r.constellation_id] = (cViewsFreq[r.constellation_id] ?? 0) + 1
   }
+  const cReportsFreq: Record<string, number> = {}
+  for (const r of cReportsRes.data ?? []) {
+    cReportsFreq[r.reported_constellation_id] = (cReportsFreq[r.reported_constellation_id] ?? 0) + 1
+  }
+  const cConstBlocksFreq: Record<string, number> = {}
+  for (const r of cConstBlocksRes.data ?? []) {
+    cConstBlocksFreq[r.blocked_constellation_id] = (cConstBlocksFreq[r.blocked_constellation_id] ?? 0) + 1
+  }
+  const cPassesFreq: Record<string, number> = {}
+  for (const r of cPassesRes.data ?? []) {
+    cPassesFreq[r.target_dynamic_id] = (cPassesFreq[r.target_dynamic_id] ?? 0) + 1
+  }
 
   const cTopIds = [...new Set([...Object.keys(cStarsFreq), ...Object.keys(cLikesFreq)])]
     .sort((a, b) =>
@@ -691,7 +706,15 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     .sort((a, b) => (cViewsFreq[b] ?? 0) - (cViewsFreq[a] ?? 0))
     .slice(0, 3)
 
-  const cAllIds = [...new Set([...cTopIds, ...cPopIds])]
+  const cReportedIds = Object.keys(cReportsFreq)
+    .sort((a, b) => (cReportsFreq[b] ?? 0) - (cReportsFreq[a] ?? 0))
+    .slice(0, 3)
+
+  const cDislikedIds = Object.keys(cPassesFreq)
+    .sort((a, b) => (cPassesFreq[b] ?? 0) - (cPassesFreq[a] ?? 0))
+    .slice(0, 3)
+
+  const cAllIds = [...new Set([...cTopIds, ...cPopIds, ...cReportedIds, ...cDislikedIds])]
 
   const cNameMap: Record<string, string> = {}
   const cMemberMap: Record<string, number> = {}
@@ -752,6 +775,29 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
         initials:     getConstInitials(id),
         member_count: cMemberMap[id] ?? 0,
         views:        cViewsFreq[id] ?? 0,
+      })),
+      most_reported: cReportedIds.map(id => {
+        const reports  = cReportsFreq[id]     ?? 0
+        const blocks   = cConstBlocksFreq[id] ?? 0
+        const severity = reports >= 20 ? 'high' : reports >= 10 ? 'medium' : 'low'
+        return {
+          id,
+          name:         cNameMap[id]   ?? 'Unnamed',
+          initials:     getConstInitials(id),
+          member_count: cMemberMap[id] ?? 0,
+          reports,
+          blocks,
+          severity,
+          photo_url:    null,
+        }
+      }),
+      most_disliked: cDislikedIds.map(id => ({
+        id,
+        name:         cNameMap[id]    ?? 'Unnamed',
+        initials:     getConstInitials(id),
+        member_count: cMemberMap[id]  ?? 0,
+        passes:       cPassesFreq[id] ?? 0,
+        photo_url:    null,
       })),
     },
   })
