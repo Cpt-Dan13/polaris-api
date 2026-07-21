@@ -933,12 +933,14 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
 
   const [
     profilesRes,
+    promptUsersRes,
     subscriptionsRes,
     likesRes,
     matchesRes,
     recentViewersRes,
   ] = await Promise.all([
     supabase.from('profiles').select('id, bio, religion, politics, ethnicity, has_children, drinking, smoking, marijuana, drugs, height_cm'),
+    supabase.from('prompt_answers').select('user_id, answer'),
     supabase.from('subscriptions').select('user_id').eq('status', 'active'),
     supabase.from('likes').select('liked_id').is('liked_constellation_id', null),
     supabase.from('matches').select('user1_id, user2_id').eq('status', 'active'),
@@ -957,6 +959,25 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
     matchesFreq[m.user2_id] = (matchesFreq[m.user2_id] ?? 0) + 1
   }
 
+  const promptAnswerLengths: Record<string, number[]> = {}
+  for (const row of promptUsersRes.data ?? []) {
+    if (!promptAnswerLengths[row.user_id]) promptAnswerLengths[row.user_id] = []
+    promptAnswerLengths[row.user_id].push((row.answer as string).length)
+  }
+  const PROMPT_LIMIT     = 250
+  const EFFORT_THRESHOLD = PROMPT_LIMIT * 0.60
+  const promptUserIds = {
+    detailed: new Set(
+      Object.entries(promptAnswerLengths)
+        .filter(([, lens]) => lens.reduce((a, b) => a + b, 0) / lens.length >= EFFORT_THRESHOLD)
+        .map(([id]) => id)
+    ),
+    brief: new Set(
+      Object.entries(promptAnswerLengths)
+        .filter(([, lens]) => lens.reduce((a, b) => a + b, 0) / lens.length < EFFORT_THRESHOLD)
+        .map(([id]) => id)
+    ),
+  }
   const premiumUserIds   = new Set<string>((subscriptionsRes.data ?? []).map(s => s.user_id))
   const recentViewerIds  = new Set<string>((recentViewersRes.data ?? []).map(v => v.viewer_id))
 
@@ -976,6 +997,9 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   }
 
   // ── Per-attribute splits ──────────────────────────────────────────────────
+  const withPrompts    = allIds.filter(id => promptUserIds.detailed.has(id))
+  const withoutPrompts = allIds.filter(id => promptUserIds.brief.has(id))
+
   const withBio    = profiles.filter(p => (p.bio?.length ?? 0) > 80).map(p => p.id)
   const withoutBio = profiles.filter(p => (p.bio?.length ?? 0) <= 80).map(p => p.id)
 
@@ -1007,6 +1031,7 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   const withoutHeight = profiles.filter(p => !p.height_cm).map(p => p.id)
 
   return c.json({
+    prompt_answers:    lift(withPrompts,        withoutPrompts,    likesFreq),
     bio_length:        lift(withBio,            withoutBio,        likesFreq),
     premium:           lift(withPremium,        withoutPremium,    matchesFreq),
     religion_politics: lift(withValues,         withoutValues,     matchesFreq),
