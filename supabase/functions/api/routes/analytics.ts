@@ -933,14 +933,12 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
 
   const [
     profilesRes,
-    promptUsersRes,
     subscriptionsRes,
     likesRes,
     matchesRes,
     recentViewersRes,
   ] = await Promise.all([
     supabase.from('profiles').select('id, bio, religion, politics, ethnicity, has_children, drinking, smoking, marijuana, drugs, height_cm'),
-    supabase.from('prompt_answers').select('user_id'),
     supabase.from('subscriptions').select('user_id').eq('status', 'active'),
     supabase.from('likes').select('liked_id').is('liked_constellation_id', null),
     supabase.from('matches').select('user1_id, user2_id').eq('status', 'active'),
@@ -959,7 +957,6 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
     matchesFreq[m.user2_id] = (matchesFreq[m.user2_id] ?? 0) + 1
   }
 
-  const promptUserIds    = new Set<string>((promptUsersRes.data   ?? []).map(p => p.user_id))
   const premiumUserIds   = new Set<string>((subscriptionsRes.data ?? []).map(s => s.user_id))
   const recentViewerIds  = new Set<string>((recentViewersRes.data ?? []).map(v => v.viewer_id))
 
@@ -979,9 +976,6 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   }
 
   // ── Per-attribute splits ──────────────────────────────────────────────────
-  const withPrompts    = allIds.filter(id =>  promptUserIds.has(id))
-  const withoutPrompts = allIds.filter(id => !promptUserIds.has(id))
-
   const withBio    = profiles.filter(p => (p.bio?.length ?? 0) > 80).map(p => p.id)
   const withoutBio = profiles.filter(p => (p.bio?.length ?? 0) <= 80).map(p => p.id)
 
@@ -997,17 +991,22 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   const withEthnicity    = profiles.filter(p =>  p.ethnicity).map(p => p.id)
   const withoutEthnicity = profiles.filter(p => !p.ethnicity).map(p => p.id)
 
-  const withChildren    = profiles.filter(p =>  p.has_children).map(p => p.id)
-  const withoutChildren = profiles.filter(p => !p.has_children).map(p => p.id)
+  const withChildren    = profiles.filter(p => p.has_children === 'has_child').map(p => p.id)
+  const withoutChildren = profiles.filter(p => p.has_children === 'no_child').map(p => p.id)
 
-  const withVices    = profiles.filter(p =>  p.drinking && p.smoking && p.marijuana && p.drugs).map(p => p.id)
-  const withoutVices = profiles.filter(p => !p.drinking || !p.smoking || !p.marijuana || !p.drugs).map(p => p.id)
+  const VICE_USE = ['yes', 'sometimes']
+  const withVices    = profiles.filter(p =>
+    VICE_USE.includes(p.drinking) || VICE_USE.includes(p.smoking) ||
+    VICE_USE.includes(p.marijuana) || VICE_USE.includes(p.drugs)
+  ).map(p => p.id)
+  const withoutVices = profiles.filter(p =>
+    p.drinking === 'no' && p.smoking === 'no' && p.marijuana === 'no' && p.drugs === 'no'
+  ).map(p => p.id)
 
   const withHeight    = profiles.filter(p =>  p.height_cm).map(p => p.id)
   const withoutHeight = profiles.filter(p => !p.height_cm).map(p => p.id)
 
   return c.json({
-    prompt_answers:    lift(withPrompts,        withoutPrompts,    likesFreq),
     bio_length:        lift(withBio,            withoutBio,        likesFreq),
     premium:           lift(withPremium,        withoutPremium,    matchesFreq),
     religion_politics: lift(withValues,         withoutValues,     matchesFreq),
