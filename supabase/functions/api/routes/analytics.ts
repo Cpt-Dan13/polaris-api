@@ -926,6 +926,153 @@ analytics.get('/insights', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/insights/health
+// Returns profile health score and signals per profile type
+analytics.get('/insights/health', requireRole('viewer'), async (c) => {
+  const [
+    profilesRes,
+    promptAnswersRes,
+    viewsRes,
+    likesRes,
+    matchesRes,
+    chatsRes,
+    hiddenChatsRes,
+    constViewsRes,
+    constellationsRes,
+  ] = await Promise.all([
+    supabase.from('profiles').select('id, gender, bio'),
+    supabase.from('prompt_answers').select('user_id, answer'),
+    supabase.from('profile_views').select('viewed_id'),
+    supabase.from('likes').select('liked_id, liked_constellation_id'),
+    supabase.from('matches').select('id, user1_id, user2_id, liker_constellation_id, liked_constellation_id, status'),
+    supabase.from('chats').select('id, match_id, sender_constellation_id, receiver_constellation_id'),
+    supabase.from('hidden_chats').select('chat_id').eq('is_hidden', true),
+    supabase.from('constellation_views').select('constellation_id'),
+    supabase.from('constellations').select('id, description, profile_photo_url'),
+  ])
+
+  const profiles = profilesRes.data ?? []
+  const patriarchIds = new Set<string>()
+  const museIds      = new Set<string>()
+  for (const p of profiles) {
+    if      (p.gender === 'patriarch') patriarchIds.add(p.id)
+    else if (p.gender === 'muse')      museIds.add(p.id)
+  }
+
+  const hiddenChatIds = new Set<string>((hiddenChatsRes.data ?? []).map(h => h.chat_id))
+
+  // Prompt quality: per-user avg answer length >= 150 chars
+  const promptLengths: Record<string, number[]> = {}
+  for (const row of promptAnswersRes.data ?? []) {
+    if (!promptLengths[row.user_id]) promptLengths[row.user_id] = []
+    promptLengths[row.user_id].push((row.answer as string).length)
+  }
+  const qualityUserIds = new Set(
+    Object.entries(promptLengths)
+      .filter(([, lens]) => lens.reduce((a, b) => a + b, 0) / lens.length >= 150)
+      .map(([id]) => id)
+  )
+
+  function pct(num: number, den: number): number {
+    return den === 0 ? 0 : Math.round((num / den) * 100)
+  }
+  // Like rate: scale so 20% view-to-like = 100 score
+  function likeScore(likes: number, views: number): number {
+    return Math.min(100, Math.round(pct(likes, views) * 5))
+  }
+  function avg(...scores: number[]): number {
+    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+  }
+
+  // ── Patriarch ─────────────────────────────────────────────────────────────
+  const pProfiles    = profiles.filter(p => patriarchIds.has(p.id))
+  const pBioCount    = pProfiles.filter(p => p.bio && p.bio.length > 0).length
+  const pBioScore    = pct(pBioCount, pProfiles.length)
+  const pPromptCount = pProfiles.filter(p => qualityUserIds.has(p.id)).length
+  const pPromptScore = pct(pPromptCount, pProfiles.length)
+  const pViews       = (viewsRes.data ?? []).filter(v => patriarchIds.has(v.viewed_id)).length
+  const pLikes       = (likesRes.data ?? []).filter(l => patriarchIds.has(l.liked_id) && !l.liked_constellation_id).length
+  const pLikeScore   = likeScore(pLikes, pViews)
+  const pMatchIds    = new Set<string>()
+  for (const m of matchesRes.data ?? []) {
+    if (m.status === 'active' && !m.liker_constellation_id && !m.liked_constellation_id &&
+        (patriarchIds.has(m.user1_id) || patriarchIds.has(m.user2_id))) pMatchIds.add(m.id)
+  }
+  const pChats     = (chatsRes.data ?? []).filter(
+    ch => ch.match_id && pMatchIds.has(ch.match_id) &&
+          !ch.sender_constellation_id && !ch.receiver_constellation_id && !hiddenChatIds.has(ch.id)
+  ).length
+  const pChatScore = pct(pChats, pMatchIds.size)
+
+  // ── Muse ──────────────────────────────────────────────────────────────────
+  const mProfiles    = profiles.filter(p => museIds.has(p.id))
+  const mBioCount    = mProfiles.filter(p => p.bio && p.bio.length > 0).length
+  const mBioScore    = pct(mBioCount, mProfiles.length)
+  const mPromptCount = mProfiles.filter(p => qualityUserIds.has(p.id)).length
+  const mPromptScore = pct(mPromptCount, mProfiles.length)
+  const mViews       = (viewsRes.data ?? []).filter(v => museIds.has(v.viewed_id)).length
+  const mLikes       = (likesRes.data ?? []).filter(l => museIds.has(l.liked_id) && !l.liked_constellation_id).length
+  const mLikeScore   = likeScore(mLikes, mViews)
+  const mMatchIds    = new Set<string>()
+  for (const m of matchesRes.data ?? []) {
+    if (m.status === 'active' && !m.liker_constellation_id && !m.liked_constellation_id &&
+        (museIds.has(m.user1_id) || museIds.has(m.user2_id))) mMatchIds.add(m.id)
+  }
+  const mChats     = (chatsRes.data ?? []).filter(
+    ch => ch.match_id && mMatchIds.has(ch.match_id) &&
+          !ch.sender_constellation_id && !ch.receiver_constellation_id && !hiddenChatIds.has(ch.id)
+  ).length
+  const mChatScore = pct(mChats, mMatchIds.size)
+
+  // ── Constellation ─────────────────────────────────────────────────────────
+  const constellations  = constellationsRes.data ?? []
+  const cBioCount       = constellations.filter(c => c.description && c.description.length > 0).length
+  const cBioScore       = pct(cBioCount, constellations.length)
+  const cPhotoCount     = constellations.filter(c => !!c.profile_photo_url).length
+  const cPhotoScore     = pct(cPhotoCount, constellations.length)
+  const cViews          = (constViewsRes.data ?? []).length
+  const cLikes          = (likesRes.data ?? []).filter(l => !!l.liked_constellation_id).length
+  const cLikeScore      = likeScore(cLikes, cViews)
+  const cMatchIds       = new Set<string>()
+  for (const m of matchesRes.data ?? []) {
+    if (m.status === 'active' && (!!m.liker_constellation_id || !!m.liked_constellation_id)) cMatchIds.add(m.id)
+  }
+  const cChats     = (chatsRes.data ?? []).filter(
+    ch => (!!ch.sender_constellation_id || !!ch.receiver_constellation_id) && !hiddenChatIds.has(ch.id)
+  ).length
+  const cChatScore = pct(cChats, cMatchIds.size)
+
+  return c.json({
+    patriarch: {
+      overall: avg(pBioScore, pPromptScore, pLikeScore, pChatScore),
+      signals: [
+        { label: 'Bio Completeness', score: pBioScore,    detail: `${pBioCount} of ${pProfiles.length} patriarchs have a filled bio` },
+        { label: 'Prompt Quality',   score: pPromptScore, detail: `${pPromptCount} of ${pProfiles.length} write detailed prompt answers` },
+        { label: 'Like Rate',        score: pLikeScore,   detail: `${pLikes} likes across ${pViews} profile views` },
+        { label: 'Match-to-Chat',    score: pChatScore,   detail: `${pChats} of ${pMatchIds.size} matches started a conversation` },
+      ],
+    },
+    muse: {
+      overall: avg(mBioScore, mPromptScore, mLikeScore, mChatScore),
+      signals: [
+        { label: 'Bio Completeness', score: mBioScore,    detail: `${mBioCount} of ${mProfiles.length} muses have a filled bio` },
+        { label: 'Prompt Quality',   score: mPromptScore, detail: `${mPromptCount} of ${mProfiles.length} write detailed prompt answers` },
+        { label: 'Like Rate',        score: mLikeScore,   detail: `${mLikes} likes across ${mViews} profile views` },
+        { label: 'Match-to-Chat',    score: mChatScore,   detail: `${mChats} of ${mMatchIds.size} matches started a conversation` },
+      ],
+    },
+    constellation: {
+      overall: avg(cBioScore, cPhotoScore, cLikeScore, cChatScore),
+      signals: [
+        { label: 'Group Bio',         score: cBioScore,   detail: `${cBioCount} of ${constellations.length} constellations have a group bio` },
+        { label: 'Profile Photo Set', score: cPhotoScore, detail: `${cPhotoCount} of ${constellations.length} have a profile photo` },
+        { label: 'Like Rate',         score: cLikeScore,  detail: `${cLikes} likes across ${cViews} constellation views` },
+        { label: 'Match-to-Chat',     score: cChatScore,  detail: `${cChats} of ${cMatchIds.size} matches started a conversation` },
+      ],
+    },
+  })
+})
+
 // GET /analytics/insights/correlations
 // Computes lift ratios for each attribute (has attribute vs. doesn't)
 analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
