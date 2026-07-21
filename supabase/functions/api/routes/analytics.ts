@@ -974,7 +974,7 @@ analytics.get('/insights/health', requireRole('viewer'), async (c) => {
   )
 
   function pct(num: number, den: number): number {
-    return den === 0 ? 0 : Math.round((num / den) * 100)
+    return den === 0 ? 0 : Math.min(100, Math.round((num / den) * 100))
   }
   // Like rate: scale so 20% view-to-like = 100 score
   function likeScore(likes: number, views: number): number {
