@@ -807,4 +807,123 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/insights
+// Returns conversion funnel counts per profile type (patriarch / muse / constellation)
+analytics.get('/insights', requireRole('viewer'), async (c) => {
+  const [
+    profilesRes,
+    viewsRes,
+    likesRes,
+    matchesRes,
+    chatsRes,
+    hiddenChatsRes,
+    constViewsRes,
+  ] = await Promise.all([
+    supabase.from('profiles').select('id, gender'),
+    supabase.from('profile_views').select('viewed_id'),
+    supabase.from('likes').select('liked_id, liked_constellation_id'),
+    supabase.from('matches').select('id, user1_id, user2_id, liker_constellation_id, liked_constellation_id, status'),
+    supabase.from('chats').select('id, match_id, sender_constellation_id, receiver_constellation_id'),
+    supabase.from('hidden_chats').select('chat_id').eq('is_hidden', true),
+    supabase.from('constellation_views').select('constellation_id'),
+  ])
+
+  const patriarchIds = new Set<string>()
+  const museIds      = new Set<string>()
+  for (const p of profilesRes.data ?? []) {
+    if      (p.gender === 'patriarch') patriarchIds.add(p.id)
+    else if (p.gender === 'muse')      museIds.add(p.id)
+  }
+
+  const hiddenChatIds = new Set<string>((hiddenChatsRes.data ?? []).map(h => h.chat_id))
+
+  // ── Patriarch ─────────────────────────────────────────────────────────────
+  const pViews = (viewsRes.data ?? []).filter(v => patriarchIds.has(v.viewed_id)).length
+
+  const pLikes = (likesRes.data ?? []).filter(
+    l => patriarchIds.has(l.liked_id) && !l.liked_constellation_id
+  ).length
+
+  const pMatchIds = new Set<string>()
+  for (const m of matchesRes.data ?? []) {
+    if (
+      m.status === 'active' &&
+      !m.liker_constellation_id &&
+      !m.liked_constellation_id &&
+      (patriarchIds.has(m.user1_id) || patriarchIds.has(m.user2_id))
+    ) pMatchIds.add(m.id)
+  }
+
+  const pActiveConvos = (chatsRes.data ?? []).filter(
+    c => c.match_id && pMatchIds.has(c.match_id) &&
+         !c.sender_constellation_id && !c.receiver_constellation_id &&
+         !hiddenChatIds.has(c.id)
+  ).length
+
+  // ── Muse ──────────────────────────────────────────────────────────────────
+  const mViews = (viewsRes.data ?? []).filter(v => museIds.has(v.viewed_id)).length
+
+  const mLikes = (likesRes.data ?? []).filter(
+    l => museIds.has(l.liked_id) && !l.liked_constellation_id
+  ).length
+
+  const mMatchIds = new Set<string>()
+  for (const m of matchesRes.data ?? []) {
+    if (
+      m.status === 'active' &&
+      !m.liker_constellation_id &&
+      !m.liked_constellation_id &&
+      (museIds.has(m.user1_id) || museIds.has(m.user2_id))
+    ) mMatchIds.add(m.id)
+  }
+
+  const mActiveConvos = (chatsRes.data ?? []).filter(
+    c => c.match_id && mMatchIds.has(c.match_id) &&
+         !c.sender_constellation_id && !c.receiver_constellation_id &&
+         !hiddenChatIds.has(c.id)
+  ).length
+
+  // ── Constellation ─────────────────────────────────────────────────────────
+  const cViews = (constViewsRes.data ?? []).length
+
+  const cLikes = (likesRes.data ?? []).filter(l => !!l.liked_constellation_id).length
+
+  const cMatches = (matchesRes.data ?? []).filter(
+    m => m.status === 'active' &&
+         (!!m.liker_constellation_id || !!m.liked_constellation_id)
+  ).length
+
+  const cActiveConvos = (chatsRes.data ?? []).filter(
+    c => (!!c.sender_constellation_id || !!c.receiver_constellation_id) &&
+         !hiddenChatIds.has(c.id)
+  ).length
+
+  return c.json({
+    patriarch: {
+      funnel: [
+        { label: 'Profile Views',  count: pViews        },
+        { label: 'Likes Received', count: pLikes        },
+        { label: 'Mutual Matches', count: pMatchIds.size },
+        { label: 'Active Conv.',   count: pActiveConvos  },
+      ],
+    },
+    muse: {
+      funnel: [
+        { label: 'Profile Views',  count: mViews        },
+        { label: 'Likes Received', count: mLikes        },
+        { label: 'Mutual Matches', count: mMatchIds.size },
+        { label: 'Active Conv.',   count: mActiveConvos  },
+      ],
+    },
+    constellation: {
+      funnel: [
+        { label: 'Const. Views',   count: cViews        },
+        { label: 'Likes Received', count: cLikes        },
+        { label: 'Mutual Matches', count: cMatches      },
+        { label: 'Active Conv.',   count: cActiveConvos  },
+      ],
+    },
+  })
+})
+
 export default analytics
