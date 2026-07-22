@@ -1629,6 +1629,51 @@ analytics.get('/acquisition/retention', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/acquisition/markets?limit=8
+// Top cities by new-user count this month, ranked by MoM growth.
+// Uses profiles.location (free-text string set by users on signup).
+analytics.get('/acquisition/markets', requireRole('viewer'), async (c) => {
+  const url   = new URL(c.req.url)
+  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '8', 10), 20)
+
+  const now             = new Date()
+  const recentStart     = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString()
+  const priorStart      = new Date(now.getFullYear(), now.getMonth() - 6, 1).toISOString()
+  const recentStartMs   = new Date(recentStart).getTime()
+
+  // Fetch profiles with a location for the past 6 months
+  const { data: rows } = await supabase
+    .from('profiles')
+    .select('location, created_at')
+    .not('location', 'is', null)
+    .gte('created_at', priorStart)
+
+  const profiles = (rows ?? []) as Array<{ location: string; created_at: string }>
+
+  const recent = new Map<string, number>()  // last 3 months
+  const prior  = new Map<string, number>()  // 3 months before that
+
+  for (const p of profiles) {
+    const loc = (p.location as string).trim()
+    if (!loc) continue
+    const map = new Date(p.created_at).getTime() >= recentStartMs ? recent : prior
+    map.set(loc, (map.get(loc) ?? 0) + 1)
+  }
+
+  // Only rank cities that had signups in the recent window
+  const ranked = [...recent.keys()]
+    .map(city => {
+      const curr  = recent.get(city) ?? 0
+      const prev  = prior.get(city)  ?? 0
+      const delta = prev === 0 ? null : +((curr - prev) / prev * 100).toFixed(1)
+      return { city, users: curr, delta }
+    })
+    .sort((a, b) => (b.delta ?? Infinity) - (a.delta ?? Infinity))
+    .slice(0, limit)
+
+  return c.json(ranked)
+})
+
 // GET /analytics/acquisition/kpis
 // Returns the four KPI cards for the Acquisition & Retention tab.
 analytics.get('/acquisition/kpis', requireRole('viewer'), async (c) => {
