@@ -10,6 +10,25 @@ const TIER_MONTHLY_PRICE: Record<string, number> = {
   supernova: 38.88,
 }
 
+type RevenueEventRow = {
+  event_type:       string
+  tier:             string | null
+  from_tier:        string | null
+  to_tier:          string | null
+  billing_interval: string | null
+}
+
+function eventRevenue(e: RevenueEventRow): number {
+  if (e.event_type === 'upgraded') {
+    return Math.max(0, (TIER_MONTHLY_PRICE[e.to_tier ?? ''] ?? 0) - (TIER_MONTHLY_PRICE[e.from_tier ?? ''] ?? 0))
+  }
+  if (e.event_type === 'downgraded' || e.event_type === 'cancelled') return 0
+  const monthly = TIER_MONTHLY_PRICE[e.tier ?? ''] ?? 0
+  if (e.billing_interval === 'weekly') return monthly * (52 / 12)
+  if (e.billing_interval === 'annual') return monthly * 0.8
+  return monthly
+}
+
 
 // GET /finance/subscriptions
 // Returns paginated subscriptions with joined profile info (two-query merge,
@@ -310,6 +329,193 @@ finance.get('/subscriptions/recent-events', requireRole('viewer'), async (c) => 
       tier:       e.tier,
       from_tier:  e.from_tier,
       to_tier:    e.to_tier,
+      created_at: e.created_at,
+    }
+  }))
+})
+
+// GET /finance/revenue/kpis
+// Gross and Net revenue month-to-date, approximated from subscription_events × tier price.
+// Payment Success and Refund Rate require a payment processor — not returned here (frontend mocks them).
+finance.get('/revenue/kpis', requireRole('viewer'), async (c) => {
+  const now           = new Date()
+  const monthStart    = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()
+
+  const REVENUE_TYPES = ['subscribed', 'renewed', 'reactivated', 'upgraded']
+
+  const [thisRes, prevRes] = await Promise.all([
+    supabase.from('subscription_events')
+      .select('event_type, tier, from_tier, to_tier, billing_interval')
+      .in('event_type', REVENUE_TYPES)
+      .gte('created_at', monthStart),
+    supabase.from('subscription_events')
+      .select('event_type, tier, from_tier, to_tier, billing_interval')
+      .in('event_type', REVENUE_TYPES)
+      .gte('created_at', prevMonthStart)
+      .lt('created_at', monthStart),
+  ])
+
+  const grossThis = (thisRes.data as RevenueEventRow[] ?? []).reduce((s, e) => s + eventRevenue(e), 0)
+  const grossPrev = (prevRes.data as RevenueEventRow[] ?? []).reduce((s, e) => s + eventRevenue(e), 0)
+  const netThis   = grossThis * 0.971
+  const netPrev   = grossPrev * 0.971
+
+  function pctDelta(cur: number, prev: number): number {
+    if (prev === 0) return 0
+    return +((cur - prev) / Math.abs(prev) * 100).toFixed(1)
+  }
+
+  return c.json({
+    gross_mtd:   Math.round(grossThis * 100) / 100,
+    gross_delta: pctDelta(grossThis, grossPrev),
+    net_mtd:     Math.round(netThis * 100) / 100,
+    net_delta:   pctDelta(netThis, netPrev),
+  })
+})
+
+// GET /finance/revenue/trend?period=week|month|year
+// Gross and net revenue bucketed by period, derived from subscription_events.
+// Net = gross × 0.971 (approximate 2.9% processing fee).
+finance.get('/revenue/trend', requireRole('viewer'), async (c) => {
+  const period = (c.req.query('period') ?? 'week') as 'week' | 'month' | 'year'
+  const now    = new Date()
+
+  type Bucket = { label: string; start: number; end: number }
+  let buckets: Bucket[]
+
+  if (period === 'week') {
+    buckets = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(now); d.setDate(d.getDate() - (6 - i)); d.setHours(0, 0, 0, 0)
+      const next = new Date(d); next.setDate(next.getDate() + 1)
+      return { label: d.toLocaleDateString('en-US', { weekday: 'short' }), start: d.getTime(), end: next.getTime() }
+    })
+  } else if (period === 'month') {
+    buckets = Array.from({ length: 4 }, (_, i) => {
+      const end   = new Date(now); end.setDate(end.getDate() - (3 - i) * 7)
+      const start = new Date(end); start.setDate(start.getDate() - 7)
+      return { label: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), start: start.getTime(), end: end.getTime() }
+    })
+  } else {
+    buckets = Array.from({ length: 12 }, (_, i) => {
+      const offset = 11 - i
+      const start  = new Date(now.getFullYear(), now.getMonth() - offset, 1)
+      const end    = new Date(now.getFullYear(), now.getMonth() - offset + 1, 1)
+      return { label: start.toLocaleDateString('en-US', { month: 'short' }), start: start.getTime(), end: end.getTime() }
+    })
+  }
+
+  const since = new Date(buckets[0].start).toISOString()
+
+  const { data: events } = await supabase
+    .from('subscription_events')
+    .select('event_type, tier, from_tier, to_tier, billing_interval, created_at')
+    .in('event_type', ['subscribed', 'renewed', 'reactivated', 'upgraded'])
+    .gte('created_at', since)
+
+  type EventWithDate = RevenueEventRow & { created_at: string }
+  const eventsArr = (events ?? []) as EventWithDate[]
+
+  const gross = buckets.map(b => {
+    const inRange = eventsArr.filter(e => {
+      const t = new Date(e.created_at).getTime()
+      return t >= b.start && t < b.end
+    })
+    return Math.round(inRange.reduce((s, e) => s + eventRevenue(e), 0) * 100) / 100
+  })
+
+  return c.json({
+    labels: buckets.map(b => b.label),
+    gross,
+    net: gross.map(g => Math.round(g * 0.971 * 100) / 100),
+  })
+})
+
+// GET /finance/revenue/plan-mrr
+// MRR breakdown by paid tier (Nova, Supernova), current vs approx 30 days ago.
+// Orbit is excluded — $0 MRR.
+finance.get('/revenue/plan-mrr', requireRole('viewer'), async (c) => {
+  const day30ago = new Date(Date.now() - 30 * 86_400_000).toISOString()
+
+  type SubRow = { tier: string; billing_interval: string }
+
+  const [activeRes, newRes, cancelRes] = await Promise.all([
+    supabase.from('subscriptions').select('tier, billing_interval').eq('status', 'active').in('tier', ['nova', 'supernova']),
+    supabase.from('subscriptions').select('tier, billing_interval').in('tier', ['nova', 'supernova']).gte('created_at', day30ago),
+    supabase.from('subscriptions').select('tier, billing_interval').in('tier', ['nova', 'supernova']).eq('status', 'canceled').gte('updated_at', day30ago),
+  ])
+
+  function mrrByTier(subs: SubRow[]): Record<string, number> {
+    const result: Record<string, number> = { nova: 0, supernova: 0 }
+    for (const s of subs) {
+      const monthly = TIER_MONTHLY_PRICE[s.tier] ?? 0
+      const contrib = s.billing_interval === 'weekly' ? monthly * (52 / 12)
+                    : s.billing_interval === 'annual'  ? monthly * 0.8
+                    : monthly
+      if (s.tier in result) result[s.tier] += contrib
+    }
+    return result
+  }
+
+  const currentMRR = mrrByTier((activeRes.data  as SubRow[]) ?? [])
+  const newMRR     = mrrByTier((newRes.data     as SubRow[]) ?? [])
+  const cancelMRR  = mrrByTier((cancelRes.data  as SubRow[]) ?? [])
+
+  const plans = ['nova', 'supernova'].map(tier => {
+    const current = Math.round((currentMRR[tier] ?? 0) * 100) / 100
+    const prev    = Math.max(0, Math.round(((currentMRR[tier] ?? 0) - (newMRR[tier] ?? 0) + (cancelMRR[tier] ?? 0)) * 100) / 100)
+    return { tier, current, prev }
+  })
+
+  return c.json({
+    plans,
+    total_mrr: Math.round(plans.reduce((s, p) => s + p.current, 0) * 100) / 100,
+  })
+})
+
+// GET /finance/revenue/recent-transactions?limit=20
+// Revenue-generating subscription events repurposed as a transaction feed.
+// Amounts are calculated from tier prices. Orbit (free) and cancelled events are excluded.
+finance.get('/revenue/recent-transactions', requireRole('viewer'), async (c) => {
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 50)
+
+  type FullEventRow = RevenueEventRow & { id: string; user_id: string; created_at: string }
+
+  const { data: events } = await supabase
+    .from('subscription_events')
+    .select('id, user_id, event_type, tier, from_tier, to_tier, billing_interval, created_at')
+    .not('event_type', 'eq', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(limit * 3) // fetch extra; we filter orbit-free events below
+
+  const raw = (events ?? []) as FullEventRow[]
+
+  const filtered = raw
+    .filter(e => eventRevenue(e) > 0)
+    .slice(0, limit)
+
+  if (filtered.length === 0) return c.json([])
+
+  const userIds = [...new Set(filtered.map(e => e.user_id))]
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name')
+    .in('id', userIds)
+
+  const profileMap = new Map(
+    (profiles ?? []).map((p: { id: string; first_name: string; last_name: string | null }) => [p.id, p])
+  )
+
+  return c.json(filtered.map(e => {
+    const p = profileMap.get(e.user_id) as { first_name: string; last_name: string | null } | undefined
+    return {
+      id:         e.id,
+      name:       p ? (p.last_name ? `${p.first_name} ${p.last_name}` : p.first_name) : 'Unknown',
+      event_type: e.event_type,
+      tier:       e.tier,
+      from_tier:  e.from_tier,
+      to_tier:    e.to_tier,
+      amount:     Math.round(eventRevenue(e) * 100) / 100,
       created_at: e.created_at,
     }
   }))
