@@ -1558,6 +1558,77 @@ analytics.get('/acquisition/signups', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/acquisition/retention
+// D1 / D7 / D30 cumulative retention for users who signed up 30–90 days ago.
+// Activity signal: first message sent after signup (most reliable historical data).
+// Constellation retention uses the creator's first post-creation message as the signal.
+analytics.get('/acquisition/retention', requireRole('viewer'), async (c) => {
+  const now      = new Date()
+  const day30ago = new Date(now.getTime() - 30 * 86_400_000).toISOString()
+  const day90ago = new Date(now.getTime() - 90 * 86_400_000).toISOString()
+
+  const [pCohortRes, mCohortRes, cCohortRes] = await Promise.all([
+    supabase.from('profiles').select('id, created_at').eq('gender', 'patriarch')
+      .gte('created_at', day90ago).lt('created_at', day30ago),
+    supabase.from('profiles').select('id, created_at').eq('gender', 'muse')
+      .gte('created_at', day90ago).lt('created_at', day30ago),
+    supabase.from('constellations').select('id, created_at, created_by')
+      .gte('created_at', day90ago).lt('created_at', day30ago),
+  ])
+
+  const pCohort = (pCohortRes.data ?? []) as Array<{ id: string; created_at: string }>
+  const mCohort = (mCohortRes.data ?? []) as Array<{ id: string; created_at: string }>
+  const cCohort = (cCohortRes.data ?? []) as Array<{ id: string; created_at: string; created_by: string }>
+
+  const uniqueUserIds = [...new Set([
+    ...pCohort.map(u => u.id),
+    ...mCohort.map(u => u.id),
+    ...cCohort.map(c => c.created_by),
+  ])]
+
+  const firstActivity = new Map<string, number>()
+  if (uniqueUserIds.length > 0) {
+    const { data: msgRows } = await supabase
+      .from('messages')
+      .select('sender_id, created_at')
+      .in('sender_id', uniqueUserIds)
+      .gte('created_at', day90ago)
+
+    for (const msg of (msgRows ?? []) as Array<{ sender_id: string; created_at: string }>) {
+      const ts  = new Date(msg.created_at).getTime()
+      const cur = firstActivity.get(msg.sender_id)
+      if (!cur || ts < cur) firstActivity.set(msg.sender_id, ts)
+    }
+  }
+
+  type RetentionResult = { d1: number; d7: number; d30: number; cohort_size: number }
+
+  function computeRetention(entries: Array<{ createdAt: number; actorId: string }>): RetentionResult {
+    if (entries.length === 0) return { d1: 0, d7: 0, d30: 0, cohort_size: 0 }
+    let d1 = 0, d7 = 0, d30 = 0
+    for (const e of entries) {
+      const actMs = firstActivity.get(e.actorId)
+      if (!actMs) continue
+      const days = (actMs - e.createdAt) / 86_400_000
+      if (days <= 2)  d1++
+      if (days <= 7)  d7++
+      if (days <= 30) d30++
+    }
+    return {
+      d1:          Math.round((d1  / entries.length) * 100),
+      d7:          Math.round((d7  / entries.length) * 100),
+      d30:         Math.round((d30 / entries.length) * 100),
+      cohort_size: entries.length,
+    }
+  }
+
+  return c.json({
+    patriarchs:     computeRetention(pCohort.map(u => ({ createdAt: new Date(u.created_at).getTime(), actorId: u.id }))),
+    muses:          computeRetention(mCohort.map(u => ({ createdAt: new Date(u.created_at).getTime(), actorId: u.id }))),
+    constellations: computeRetention(cCohort.map(c => ({ createdAt: new Date(c.created_at).getTime(), actorId: c.created_by }))),
+  })
+})
+
 // GET /analytics/acquisition/kpis
 // Returns the four KPI cards for the Acquisition & Retention tab.
 analytics.get('/acquisition/kpis', requireRole('viewer'), async (c) => {
