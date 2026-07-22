@@ -5,9 +5,9 @@ import { requireRole } from '../../_shared/rbac.ts'
 const finance = new Hono()
 
 const TIER_MONTHLY_PRICE: Record<string, number> = {
-  orbit:     9.99,
-  nova:      19.99,
-  supernova: 39.99,
+  orbit:     0,      // free tier — no MRR contribution
+  nova:      18.88,
+  supernova: 38.88,
 }
 
 
