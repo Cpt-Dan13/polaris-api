@@ -187,13 +187,16 @@ finance.get('/subscriptions/kpis', requireRole('viewer'), async (c) => {
 
 // GET /finance/subscriptions/plan-distribution
 // Per-tier subscriber counts + MRR breakdown for the donut chart.
+// free_users: profiles with no paid subscription (null or orbit tier) — sourced
+// directly from profiles since they have no subscriptions row.
 finance.get('/subscriptions/plan-distribution', requireRole('viewer'), async (c) => {
-  const { data, error } = await supabase
-    .from('subscriptions')
-    .select('tier, billing_interval')
-    .eq('status', 'active')
+  const [subsRes, freeRes] = await Promise.all([
+    supabase.from('subscriptions').select('tier, billing_interval').eq('status', 'active'),
+    supabase.from('profiles').select('id', { count: 'exact', head: true })
+      .eq('subscription_tier', 'orbit'),
+  ])
 
-  if (error) return c.json({ error: error.message }, 500)
+  if (subsRes.error) return c.json({ error: subsRes.error.message }, 500)
 
   const buckets: Record<string, { subs: number; mrr: number }> = {
     orbit:     { subs: 0, mrr: 0 },
@@ -201,7 +204,7 @@ finance.get('/subscriptions/plan-distribution', requireRole('viewer'), async (c)
     supernova: { subs: 0, mrr: 0 },
   }
 
-  for (const s of (data ?? []) as Array<{ tier: string; billing_interval: string }>) {
+  for (const s of (subsRes.data ?? []) as Array<{ tier: string; billing_interval: string }>) {
     if (!buckets[s.tier]) continue
     buckets[s.tier].subs++
     const monthly = TIER_MONTHLY_PRICE[s.tier] ?? 0
@@ -222,6 +225,7 @@ finance.get('/subscriptions/plan-distribution', requireRole('viewer'), async (c)
     })),
     total_subs: totalSubs,
     total_mrr:  Math.round(totalMRR * 100) / 100,
+    free_users: freeRes.count ?? 0,
   })
 })
 
