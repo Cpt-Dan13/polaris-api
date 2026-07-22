@@ -121,12 +121,28 @@ analytics.get('/active-users/kpis', requireRole('viewer'), async (c) => {
     }
   }
 
+  // Activity by hour — concurrent sessions active during each hour of today
+  const todayStartMs = new Date(todayStart).getTime()
+  const hourly = new Array(24).fill(0) as number[]
+  for (const s of sessions) {
+    const startMs = new Date(s.started_at as string).getTime()
+    const endMs   = s.ended_at
+      ? new Date(s.ended_at as string).getTime()
+      : new Date(s.last_heartbeat_at as string).getTime()
+    for (let h = 0; h < 24; h++) {
+      const hStart = todayStartMs + h * 3_600_000
+      const hEnd   = hStart       + 3_600_000
+      if (startMs < hEnd && endMs > hStart) hourly[h]++
+    }
+  }
+
   return c.json({
     online_now:          onlineRes.count      ?? 0,
     sessions_today:      todayCountRes.count  ?? 0,
     avg_session_seconds: avgSessionSeconds,
     peak_today:          peakToday,
     peak_today_at:       peakTodayAt,
+    hourly,
   })
 })
 
