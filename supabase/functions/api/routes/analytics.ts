@@ -1502,4 +1502,102 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/acquisition/kpis
+// Returns the four KPI cards for the Acquisition & Retention tab.
+analytics.get('/acquisition/kpis', requireRole('viewer'), async (c) => {
+  const now = new Date()
+
+  const thisMonthStart     = new Date(now.getFullYear(), now.getMonth(),     1)
+  const prevMonthStart     = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const prevPrevMonthStart = new Date(now.getFullYear(), now.getMonth() - 2, 1)
+  const todayStart         = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterdayStart     = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  const day30ago           = new Date(now.getTime() - 30 * 86_400_000)
+  const day60ago           = new Date(now.getTime() - 60 * 86_400_000)
+
+  const [
+    newThisMonthRes,
+    newPrevMonthRes,
+    newPrevPrevMonthRes,
+    dauTodayRes,
+    dauYesterdayRes,
+    mau30dRes,
+    activeSubsRes,
+    churnedLast30Res,
+    churnedPrev30Res,
+  ] = await Promise.all([
+    supabase.from('profiles').select('*', { count: 'exact', head: true })
+      .gte('created_at', thisMonthStart.toISOString()),
+    supabase.from('profiles').select('*', { count: 'exact', head: true })
+      .gte('created_at', prevMonthStart.toISOString())
+      .lt('created_at', thisMonthStart.toISOString()),
+    supabase.from('profiles').select('*', { count: 'exact', head: true })
+      .gte('created_at', prevPrevMonthStart.toISOString())
+      .lt('created_at', prevMonthStart.toISOString()),
+
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', todayStart.toISOString()),
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', yesterdayStart.toISOString())
+      .lt('started_at', todayStart.toISOString()),
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', day30ago.toISOString()),
+
+    supabase.from('subscriptions').select('*', { count: 'exact', head: true })
+      .eq('status', 'active'),
+    supabase.from('subscriptions').select('*', { count: 'exact', head: true })
+      .eq('status', 'canceled')
+      .gte('updated_at', day30ago.toISOString()),
+    supabase.from('subscriptions').select('*', { count: 'exact', head: true })
+      .eq('status', 'canceled')
+      .gte('updated_at', day60ago.toISOString())
+      .lt('updated_at', day30ago.toISOString()),
+  ])
+
+  // ── New users ──────────────────────────────────────────────────────────────
+  const newThisMonth      = newThisMonthRes.count     ?? 0
+  const newPrevMonth      = newPrevMonthRes.count     ?? 0
+  const newPrevPrevMonth  = newPrevPrevMonthRes.count ?? 0
+
+  const newUsersDelta = newPrevMonth > 0
+    ? ((newThisMonth - newPrevMonth) / newPrevMonth) * 100
+    : 0
+
+  // ── MoM growth rate ────────────────────────────────────────────────────────
+  const momRate     = newPrevMonth     > 0 ? ((newThisMonth    - newPrevMonth)     / newPrevMonth)     * 100 : 0
+  const prevMomRate = newPrevPrevMonth > 0 ? ((newPrevMonth    - newPrevPrevMonth) / newPrevPrevMonth) * 100 : 0
+  const momDelta    = momRate - prevMomRate
+
+  // ── DAU / MAU ──────────────────────────────────────────────────────────────
+  const dauToday     = new Set((dauTodayRes.data     ?? []).map((s: { user_id: string }) => s.user_id)).size
+  const dauYesterday = new Set((dauYesterdayRes.data ?? []).map((s: { user_id: string }) => s.user_id)).size
+  const mau30d       = new Set((mau30dRes.data       ?? []).map((s: { user_id: string }) => s.user_id)).size
+
+  const dauMauRatio = mau30d > 0 ? (dauToday     / mau30d) * 100 : 0
+  const dauMauPrev  = mau30d > 0 ? (dauYesterday / mau30d) * 100 : 0
+  const dauMauDelta = dauMauRatio - dauMauPrev
+
+  // ── Monthly churn ──────────────────────────────────────────────────────────
+  const activeSubs    = activeSubsRes.count    ?? 0
+  const churnedLast30 = churnedLast30Res.count ?? 0
+  const churnedPrev30 = churnedPrev30Res.count ?? 0
+
+  const churnRate  = (activeSubs + churnedLast30) > 0 ? (churnedLast30 / (activeSubs + churnedLast30)) * 100 : 0
+  const prevChurn  = (activeSubs + churnedPrev30) > 0 ? (churnedPrev30 / (activeSubs + churnedPrev30)) * 100 : 0
+  const churnDelta = churnRate - prevChurn
+
+  function round1(n: number) { return Math.round(n * 10) / 10 }
+
+  return c.json({
+    new_users_month:     newThisMonth,
+    new_users_delta:     round1(newUsersDelta),
+    mom_growth_rate:     round1(momRate),
+    mom_growth_delta:    round1(momDelta),
+    dau_mau_ratio:       round1(dauMauRatio),
+    dau_mau_delta:       round1(dauMauDelta),
+    monthly_churn:       round1(churnRate),
+    monthly_churn_delta: round1(churnDelta),
+  })
+})
+
 export default analytics
