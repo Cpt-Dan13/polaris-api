@@ -146,6 +146,82 @@ analytics.get('/active-users/kpis', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/active-users/top-users
+// Returns top users by session count over the last 7 days with profile photo.
+analytics.get('/active-users/top-users', requireRole('viewer'), async (c) => {
+  const limit  = Math.min(Number(c.req.query('limit') ?? 10), 50)
+  const now    = new Date()
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString()
+
+  const { data: sessionRows } = await supabase
+    .from('user_sessions')
+    .select('user_id, started_at, ended_at, last_heartbeat_at')
+    .gte('started_at', weekAgo)
+
+  const sessions = (sessionRows ?? []) as Array<{
+    user_id: string; started_at: string; ended_at: string | null; last_heartbeat_at: string
+  }>
+
+  // Aggregate per user: session count + total duration
+  const userStats = new Map<string, { sessions: number; totalMs: number }>()
+  for (const s of sessions) {
+    const startMs = new Date(s.started_at).getTime()
+    const endMs   = s.ended_at
+      ? new Date(s.ended_at).getTime()
+      : new Date(s.last_heartbeat_at).getTime()
+    const durMs = Math.max(0, endMs - startMs)
+    const entry = userStats.get(s.user_id) ?? { sessions: 0, totalMs: 0 }
+    entry.sessions++
+    entry.totalMs += durMs
+    userStats.set(s.user_id, entry)
+  }
+
+  const topUserIds = [...userStats.entries()]
+    .sort((a, b) => b[1].sessions - a[1].sessions)
+    .slice(0, limit)
+    .map(([id]) => id)
+
+  if (topUserIds.length === 0) return c.json([])
+
+  const [profilesRes, photosRes] = await Promise.all([
+    supabase.from('profiles').select('id, first_name, last_name, gender').in('id', topUserIds),
+    supabase.from('photos').select('user_id, url, order_index').in('user_id', topUserIds).order('order_index'),
+  ])
+
+  const profileMap = new Map<string, { first_name: string; last_name: string | null; gender: string }>()
+  for (const p of (profilesRes.data ?? []) as Array<{ id: string; first_name: string; last_name: string | null; gender: string }>) {
+    profileMap.set(p.id, p)
+  }
+
+  const photoMap = new Map<string, string>()
+  for (const photo of (photosRes.data ?? []) as Array<{ user_id: string; url: string; order_index: number }>) {
+    if (!photoMap.has(photo.user_id)) photoMap.set(photo.user_id, photo.url)
+  }
+
+  const result = topUserIds.map(userId => {
+    const stats     = userStats.get(userId)!
+    const profile   = profileMap.get(userId)
+    const firstName = profile?.first_name ?? 'Unknown'
+    const lastName  = profile?.last_name  ?? null
+    const gender    = profile?.gender     ?? ''
+    const type      = gender === 'patriarch' ? 'Patriarch' : gender === 'muse' ? 'Muse' : 'Unknown'
+    const avgMs     = stats.sessions > 0 ? stats.totalMs / stats.sessions : 0
+
+    return {
+      user_id:              userId,
+      name:                 lastName ? `${firstName} ${lastName[0]}.` : firstName,
+      initials:             ((firstName[0] ?? '') + (lastName?.[0] ?? '')).toUpperCase(),
+      type,
+      photo_url:            photoMap.get(userId) ?? null,
+      sessions:             stats.sessions,
+      avg_duration_seconds: Math.round(avgMs / 1000),
+      total_seconds:        Math.round(stats.totalMs / 1000),
+    }
+  })
+
+  return c.json(result)
+})
+
 // GET /analytics/active-users/trend
 // Returns DAU bucketed by period (week=7 days, month=5 weeks, year=12 months)
 // with gender split and constellation entity count, powered by user_sessions.
