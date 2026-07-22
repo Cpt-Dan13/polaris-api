@@ -209,7 +209,7 @@ analytics.get('/active-users/top-users', requireRole('viewer'), async (c) => {
 
     return {
       user_id:              userId,
-      name:                 lastName ? `${firstName} ${lastName[0]}.` : firstName,
+      name:                 lastName ? `${firstName} ${lastName}` : firstName,
       initials:             ((firstName[0] ?? '') + (lastName?.[0] ?? '')).toUpperCase(),
       type,
       photo_url:            photoMap.get(userId) ?? null,
