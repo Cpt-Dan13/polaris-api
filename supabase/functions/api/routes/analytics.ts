@@ -146,6 +146,156 @@ analytics.get('/active-users/kpis', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/active-users/trend
+// Returns DAU bucketed by period (week=7 days, month=5 weeks, year=12 months)
+// with gender split and constellation entity count, powered by user_sessions.
+analytics.get('/active-users/trend', requireRole('viewer'), async (c) => {
+  const period = (c.req.query('period') ?? 'week') as 'week' | 'month' | 'year'
+  const now    = new Date()
+
+  type Bucket = { label: string; start: number; end: number }
+  const buckets: Bucket[] = []
+
+  if (period === 'week') {
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    for (let d = 6; d >= 0; d--) {
+      const start = todayStart - d * 86_400_000
+      const end   = start + 86_400_000 - 1
+      buckets.push({
+        label: new Date(start).toLocaleDateString('en-US', { weekday: 'short' }),
+        start,
+        end,
+      })
+    }
+  } else if (period === 'month') {
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime()
+    for (let w = 4; w >= 0; w--) {
+      const end   = todayEnd - w * 7 * 86_400_000
+      const start = end      - 7 * 86_400_000 + 1
+      buckets.push({
+        label: new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        start,
+        end,
+      })
+    }
+  } else {
+    for (let m = 11; m >= 0; m--) {
+      const monthStart = new Date(now.getFullYear(), now.getMonth() - m,     1)
+      const monthEnd   = new Date(now.getFullYear(), now.getMonth() - m + 1, 0, 23, 59, 59, 999)
+      buckets.push({
+        label: monthStart.toLocaleDateString('en-US', { month: 'short' }),
+        start: monthStart.getTime(),
+        end:   monthEnd.getTime(),
+      })
+    }
+  }
+
+  const rangeStart = new Date(Math.min(...buckets.map(b => b.start))).toISOString()
+
+  const { data: sessionRows } = await supabase
+    .from('user_sessions')
+    .select('user_id, started_at')
+    .gte('started_at', rangeStart)
+
+  const sessions = (sessionRows ?? []) as Array<{ user_id: string; started_at: string }>
+  const userIds  = [...new Set(sessions.map(s => s.user_id))]
+  const zeros    = new Array(buckets.length).fill(0)
+
+  if (userIds.length === 0) {
+    return c.json({
+      labels:         buckets.map(b => b.label),
+      total:          zeros,
+      patriarchs:     zeros,
+      muses:          zeros,
+      constellations: zeros,
+      monthly_avg:    0,
+      yearly_avg:     0,
+    })
+  }
+
+  const [profilesRes, membersRes, constellationsRes] = await Promise.all([
+    supabase.from('profiles').select('id, gender').in('id', userIds),
+    supabase.from('constellation_members').select('profile_id, dynamic_id').in('profile_id', userIds),
+    supabase.from('constellations').select('id, created_by').in('created_by', userIds),
+  ])
+
+  const genderMap = new Map<string, string>()
+  for (const p of (profilesRes.data ?? []) as Array<{ id: string; gender: string }>) {
+    genderMap.set(p.id, p.gender)
+  }
+
+  const userConstMap = new Map<string, Set<string>>()
+  for (const m of (membersRes.data ?? []) as Array<{ profile_id: string; dynamic_id: string }>) {
+    if (!userConstMap.has(m.profile_id)) userConstMap.set(m.profile_id, new Set())
+    userConstMap.get(m.profile_id)!.add(m.dynamic_id)
+  }
+  for (const con of (constellationsRes.data ?? []) as Array<{ id: string; created_by: string }>) {
+    if (!userConstMap.has(con.created_by)) userConstMap.set(con.created_by, new Set())
+    userConstMap.get(con.created_by)!.add(con.id)
+  }
+
+  const total:          number[] = []
+  const patriarchs:     number[] = []
+  const muses:          number[] = []
+  const constellations: number[] = []
+
+  for (const bucket of buckets) {
+    const uniqueUsers  = new Set<string>()
+    const uniqueConsts = new Set<string>()
+    for (const s of sessions) {
+      const ts = new Date(s.started_at).getTime()
+      if (ts >= bucket.start && ts <= bucket.end) {
+        uniqueUsers.add(s.user_id)
+        const cids = userConstMap.get(s.user_id)
+        if (cids) cids.forEach(cid => uniqueConsts.add(cid))
+      }
+    }
+    let pCount = 0, mCount = 0
+    for (const uid of uniqueUsers) {
+      const gender = genderMap.get(uid)
+      if (gender === 'patriarch') pCount++
+      else if (gender === 'muse') mCount++
+    }
+    total.push(uniqueUsers.size)
+    patriarchs.push(pCount)
+    muses.push(mCount)
+    constellations.push(uniqueConsts.size)
+  }
+
+  function avgDau(rows: Array<{ user_id: string; started_at: string }>, days: number): number {
+    const byDay = new Map<string, Set<string>>()
+    for (const row of rows) {
+      const day = row.started_at.substring(0, 10)
+      if (!byDay.has(day)) byDay.set(day, new Set())
+      byDay.get(day)!.add(row.user_id)
+    }
+    if (byDay.size === 0) return 0
+    const sum = [...byDay.values()].reduce((acc, s) => acc + s.size, 0)
+    return Math.round(sum / days)
+  }
+
+  const day30ago  = new Date(now.getTime() - 30  * 86_400_000).toISOString()
+  const day365ago = new Date(now.getTime() - 365 * 86_400_000).toISOString()
+
+  const [monthly30Res, yearly365Res] = await Promise.all([
+    supabase.from('user_sessions').select('user_id, started_at').gte('started_at', day30ago),
+    supabase.from('user_sessions').select('user_id, started_at').gte('started_at', day365ago),
+  ])
+
+  const monthly_avg = avgDau((monthly30Res.data ?? []) as Array<{ user_id: string; started_at: string }>, 30)
+  const yearly_avg  = avgDau((yearly365Res.data ?? []) as Array<{ user_id: string; started_at: string }>, 365)
+
+  return c.json({
+    labels:         buckets.map(b => b.label),
+    total,
+    patriarchs,
+    muses,
+    constellations,
+    monthly_avg,
+    yearly_avg,
+  })
+})
+
 // GET /analytics/active-users
 // Estimates DAU/WAU/MAU from message send activity
 analytics.get('/active-users', requireRole('viewer'), async (c) => {
