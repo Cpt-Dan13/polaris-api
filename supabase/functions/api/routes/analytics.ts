@@ -1502,6 +1502,62 @@ analytics.get('/insights/correlations', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/acquisition/signups
+// Monthly new-user signups for the last 12 months, split by type.
+analytics.get('/acquisition/signups', requireRole('viewer'), async (c) => {
+  const now = new Date()
+
+  const buckets: { label: string; start: number; end: number }[] = []
+  for (let m = 11; m >= 0; m--) {
+    const start = new Date(now.getFullYear(), now.getMonth() - m,     1)
+    const end   = new Date(now.getFullYear(), now.getMonth() - m + 1, 1)
+    buckets.push({ label: start.toLocaleDateString('en-US', { month: 'short' }), start: start.getTime(), end: end.getTime() })
+  }
+
+  const rangeStart = new Date(buckets[0].start).toISOString()
+
+  const [profilesRes, constellationsRes] = await Promise.all([
+    supabase.from('profiles').select('gender, created_at').gte('created_at', rangeStart),
+    supabase.from('constellations').select('created_at').gte('created_at', rangeStart),
+  ])
+
+  const profiles      = (profilesRes.data      ?? []) as Array<{ gender: string; created_at: string }>
+  const constellations = (constellationsRes.data ?? []) as Array<{ created_at: string }>
+
+  const patriarchs:        number[] = []
+  const muses:             number[] = []
+  const constellationCounts: number[] = []
+
+  for (const bucket of buckets) {
+    let pCount = 0, mCount = 0, cCount = 0
+    for (const p of profiles) {
+      const ts = new Date(p.created_at).getTime()
+      if (ts >= bucket.start && ts < bucket.end) {
+        if (p.gender === 'patriarch') pCount++
+        else if (p.gender === 'muse') mCount++
+      }
+    }
+    for (const con of constellations) {
+      const ts = new Date(con.created_at).getTime()
+      if (ts >= bucket.start && ts < bucket.end) cCount++
+    }
+    patriarchs.push(pCount)
+    muses.push(mCount)
+    constellationCounts.push(cCount)
+  }
+
+  const thisMonthStart = buckets[buckets.length - 1].start
+  const thisMonthTotal = profiles.filter(p => new Date(p.created_at).getTime() >= thisMonthStart).length
+
+  return c.json({
+    labels:           buckets.map(b => b.label),
+    patriarchs,
+    muses,
+    constellations:   constellationCounts,
+    this_month_total: thisMonthTotal,
+  })
+})
+
 // GET /analytics/acquisition/kpis
 // Returns the four KPI cards for the Acquisition & Retention tab.
 analytics.get('/acquisition/kpis', requireRole('viewer'), async (c) => {
