@@ -60,6 +60,76 @@ analytics.get('/growth', requireRole('viewer'), async (c) => {
   return c.json({ data })
 })
 
+// GET /analytics/active-users/kpis
+// Returns live KPI values for the Active Users dashboard tab, powered by user_sessions.
+analytics.get('/active-users/kpis', requireRole('viewer'), async (c) => {
+  const now        = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
+
+  // Online Now + Sessions Today in parallel; session detail for avg + peak
+  const [onlineRes, todayCountRes, todaySessionsRes] = await Promise.all([
+    supabase
+      .from('user_sessions')
+      .select('*', { count: 'exact', head: true })
+      .is('ended_at', null)
+      .gte('last_heartbeat_at', fiveMinAgo),
+
+    supabase
+      .from('user_sessions')
+      .select('*', { count: 'exact', head: true })
+      .gte('started_at', todayStart),
+
+    supabase
+      .from('user_sessions')
+      .select('started_at, ended_at, last_heartbeat_at')
+      .gte('started_at', todayStart),
+  ])
+
+  const sessions = todaySessionsRes.data ?? []
+
+  // Avg session duration (seconds) — use last_heartbeat_at as proxy end for still-open sessions
+  let avgSessionSeconds = 0
+  if (sessions.length > 0) {
+    const total = sessions.reduce((sum: number, s: Record<string, string | null>) => {
+      const endMs = s.ended_at
+        ? new Date(s.ended_at).getTime()
+        : new Date(s.last_heartbeat_at!).getTime()
+      return sum + Math.max(0, endMs - new Date(s.started_at!).getTime())
+    }, 0)
+    avgSessionSeconds = Math.round(total / sessions.length / 1000)
+  }
+
+  // Peak today — max concurrent sessions via sweep-line over open/close events
+  let peakToday  = 0
+  let peakTodayAt: string | null = null
+  if (sessions.length > 0) {
+    const events: { ts: number; delta: 1 | -1 }[] = []
+    for (const s of sessions) {
+      events.push({ ts: new Date(s.started_at as string).getTime(), delta: 1 })
+      const endRaw = (s.ended_at ?? s.last_heartbeat_at) as string | null
+      if (endRaw) events.push({ ts: new Date(endRaw).getTime(), delta: -1 })
+    }
+    events.sort((a, b) => a.ts - b.ts)
+    let concurrent = 0
+    for (const e of events) {
+      concurrent += e.delta
+      if (concurrent > peakToday) {
+        peakToday  = concurrent
+        peakTodayAt = new Date(e.ts).toISOString()
+      }
+    }
+  }
+
+  return c.json({
+    online_now:          onlineRes.count      ?? 0,
+    sessions_today:      todayCountRes.count  ?? 0,
+    avg_session_seconds: avgSessionSeconds,
+    peak_today:          peakToday,
+    peak_today_at:       peakTodayAt,
+  })
+})
+
 // GET /analytics/active-users
 // Estimates DAU/WAU/MAU from message send activity
 analytics.get('/active-users', requireRole('viewer'), async (c) => {
