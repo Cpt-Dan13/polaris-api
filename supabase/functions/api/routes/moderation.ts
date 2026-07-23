@@ -54,12 +54,12 @@ moderation.get('/flagged-messages', requireRole('support'), async (c) => {
   const { data, error } = await supabase
     .from('messages')
     .select(`
-      id, content, flagged_words, flagged_at, created_at, match_id, chat_id,
+      id, content, flagged_words, created_at, match_id, chat_id,
       sender:profiles!sender_id(id, first_name, last_name, gender)
     `)
     .eq('contains_flagged_words', true)
     .eq('is_deleted', false)
-    .order('flagged_at', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(limit)
 
   if (error) return c.json({ error: error.message }, 500)

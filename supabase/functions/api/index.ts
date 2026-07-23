@@ -5,6 +5,7 @@ import { authMiddleware } from '../_shared/auth.ts'
 
 import analytics  from './routes/analytics.ts'
 import moderation from './routes/moderation.ts'
+import chat       from './routes/chat.ts'
 import finance    from './routes/finance.ts'
 import users      from './routes/users.ts'
 
@@ -25,10 +26,11 @@ app.get('/me', (c) => c.json({ data: c.get('adminUser') }))
 
 // ── Route groups ────────────────────────────────────────────────────────────
 
-app.route('/analytics',  analytics)
-app.route('/moderation', moderation)
-app.route('/finance',    finance)
-app.route('/users',      users)
+app.route('/analytics',        analytics)
+app.route('/moderation',       moderation)
+app.route('/moderation/chat',  chat)
+app.route('/finance',          finance)
+app.route('/users',            users)
 
 // ── Fallback ────────────────────────────────────────────────────────────────
 
