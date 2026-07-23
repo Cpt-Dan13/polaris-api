@@ -33,6 +33,55 @@ moderation.get('/reports/kpis', requireRole('support'), async (c) => {
   })
 })
 
+// GET /moderation/reports/category-trend
+// Weekly report counts per category over the last 8 weeks (for the trend chart)
+// NOTE: must be declared before /:id
+moderation.get('/reports/category-trend', requireRole('support'), async (c) => {
+  const WEEKS   = 8
+  const MS_WEEK = 7 * 24 * 3_600_000
+  const now     = new Date()
+  const since   = new Date(now.getTime() - WEEKS * MS_WEEK).toISOString()
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const buckets: { label: string; start: number; end: number }[] = []
+  for (let i = 0; i < WEEKS; i++) {
+    const start = now.getTime() - (WEEKS - i) * MS_WEEK
+    const end   = i === WEEKS - 1 ? now.getTime() : now.getTime() - (WEEKS - i - 1) * MS_WEEK
+    const d     = new Date(end)
+    buckets.push({ label: `${MONTHS[d.getMonth()]} ${d.getDate()}`, start, end })
+  }
+
+  const CATEGORY_KEYS = [
+    'harassment', 'explicit_content', 'spam', 'solicitation', 'potential_scam',
+    'underage_minor', 'physical_self_harm', 'terrorism_violence', 'community_guideline',
+  ]
+
+  const { data, error } = await supabase
+    .from('reports')
+    .select('category, created_at')
+    .not('category', 'is', null)
+    .eq('is_trivial', false)
+    .gte('created_at', since)
+
+  if (error) return c.json({ error: error.message }, 500)
+
+  const counts: Record<string, number[]> = {}
+  for (const cat of CATEGORY_KEYS) counts[cat] = new Array(WEEKS).fill(0)
+
+  for (const row of data ?? []) {
+    if (!row.category || !CATEGORY_KEYS.includes(row.category)) continue
+    const ts = new Date(row.created_at).getTime()
+    for (let i = 0; i < buckets.length; i++) {
+      if (ts >= buckets[i].start && ts < buckets[i].end) {
+        counts[row.category][i]++
+        break
+      }
+    }
+  }
+
+  return c.json({ labels: buckets.map(b => b.label), ...counts })
+})
+
 // GET /moderation/reports/category-breakdown
 // Count of non-trivial classified reports grouped by category
 moderation.get('/reports/category-breakdown', requireRole('support'), async (c) => {
