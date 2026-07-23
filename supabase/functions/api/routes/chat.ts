@@ -87,15 +87,16 @@ chat.get('/risk-distribution', requireRole('support'), async (c) => {
 // Query params: status, severity, limit, offset
 
 chat.get('/flags', requireRole('support'), async (c) => {
-  const limit    = Math.min(Number(c.req.query('limit')  ?? 50), 200)
-  const offset   = Number(c.req.query('offset') ?? 0)
-  const status   = c.req.query('status')
-  const severity = c.req.query('severity')
+  const limit           = Math.min(Number(c.req.query('limit')  ?? 50), 200)
+  const offset          = Number(c.req.query('offset') ?? 0)
+  const status          = c.req.query('status')
+  const severity        = c.req.query('severity')
+  const detectionSource = c.req.query('detection_source')
 
   let query = supabase
     .from('message_flags')
     .select(`
-      id, category, severity, confidence, flagged_terms, status,
+      id, category, severity, confidence, flagged_terms, status, detection_source,
       tech_review_requested, created_at,
       sender:profiles!sender_id(id, first_name, last_name),
       receiver:profiles!receiver_id(id, first_name, last_name),
@@ -104,15 +105,34 @@ chat.get('/flags', requireRole('support'), async (c) => {
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
-  if (status)   query = query.eq('status', status)
-  if (severity) query = query.eq('severity', severity)
+  if (status)          query = query.eq('status', status)
+  if (severity)        query = query.eq('severity', severity)
+  if (detectionSource) query = query.eq('detection_source', detectionSource)
 
   const { data, count, error } = await query
   if (error) return c.json({ error: error.message }, 500)
 
+  // Fetch primary photos for all senders + receivers in one query
+  // deno-lint-ignore no-explicit-any
+  const rows = (data ?? []) as any[]
+  const userIds = [...new Set(
+    rows.flatMap((r: any) => [r.sender?.id, r.receiver?.id]).filter(Boolean)
+  )]
+  const photoMap = new Map<string, string>()
+  if (userIds.length > 0) {
+    const { data: photos } = await supabase
+      .from('photos')
+      .select('user_id, url')
+      .in('user_id', userIds)
+      .order('order_index')
+    for (const p of photos ?? []) {
+      if (!photoMap.has(p.user_id)) photoMap.set(p.user_id, p.url)
+    }
+  }
+
   // Truncate message content to a presentable snippet
   // deno-lint-ignore no-explicit-any
-  const flags = ((data ?? []) as any[]).map((row: any) => {
+  const flags = rows.map((row: any) => {
     const raw = row.message?.content ?? ''
     const snippet = raw.length > 0
       ? `"${raw.slice(0, 120)}${raw.length > 120 ? '...' : ''}"`
@@ -125,10 +145,11 @@ chat.get('/flags', requireRole('support'), async (c) => {
       confidence:            row.confidence,
       flagged_terms:         row.flagged_terms,
       status:                row.status,
+      detection_source:      row.detection_source,
       tech_review_requested: row.tech_review_requested,
       created_at:            row.created_at,
-      sender:                row.sender,
-      receiver:              row.receiver,
+      sender:   row.sender   ? { ...row.sender,   photo_url: photoMap.get(row.sender.id)   ?? null } : null,
+      receiver: row.receiver ? { ...row.receiver, photo_url: photoMap.get(row.receiver.id) ?? null } : null,
       snippet,
     }
   })
