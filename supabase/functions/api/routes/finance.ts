@@ -33,7 +33,7 @@ function eventRevenue(e: RevenueEventRow): number {
 // GET /finance/subscriptions
 // Returns paginated subscriptions with joined profile info (two-query merge,
 // since subscriptions.user_id → auth.users and profiles.id → auth.users with no direct FK)
-finance.get('/subscriptions', requireRole('admin'), async (c) => {
+finance.get('/subscriptions', requireRole('super_admin'), async (c) => {
   const status = c.req.query('status')
   const tier   = c.req.query('tier')
   const limit  = Number(c.req.query('limit') ?? 50)
@@ -68,7 +68,7 @@ finance.get('/subscriptions', requireRole('admin'), async (c) => {
 
 // GET /finance/subscriptions/summary
 // Returns MRR and subscriber counts by tier
-finance.get('/subscriptions/summary', requireRole('admin'), async (c) => {
+finance.get('/subscriptions/summary', requireRole('super_admin'), async (c) => {
   const { data, error } = await supabase
     .from('subscriptions')
     .select('tier, billing_interval, status')
@@ -94,7 +94,7 @@ finance.get('/subscriptions/summary', requireRole('admin'), async (c) => {
 
 // GET /finance/subscriptions/growth
 // Returns new subscriptions per day over the last N days
-finance.get('/subscriptions/growth', requireRole('admin'), async (c) => {
+finance.get('/subscriptions/growth', requireRole('super_admin'), async (c) => {
   const days  = Number(c.req.query('days') ?? 30)
   const since = new Date(Date.now() - days * 86_400_000).toISOString()
 
@@ -110,7 +110,7 @@ finance.get('/subscriptions/growth', requireRole('admin'), async (c) => {
 
 // GET /finance/subscriptions/churn
 // Returns canceled subscriptions over the last N days
-finance.get('/subscriptions/churn', requireRole('admin'), async (c) => {
+finance.get('/subscriptions/churn', requireRole('super_admin'), async (c) => {
   const days  = Number(c.req.query('days') ?? 30)
   const since = new Date(Date.now() - days * 86_400_000).toISOString()
 
@@ -127,7 +127,7 @@ finance.get('/subscriptions/churn', requireRole('admin'), async (c) => {
 
 // GET /finance/subscriptions/expiring
 // Returns subscriptions whose current period ends within N days
-finance.get('/subscriptions/expiring', requireRole('admin'), async (c) => {
+finance.get('/subscriptions/expiring', requireRole('super_admin'), async (c) => {
   const days  = Number(c.req.query('days') ?? 7)
   const until = new Date(Date.now() + days * 86_400_000).toISOString()
 

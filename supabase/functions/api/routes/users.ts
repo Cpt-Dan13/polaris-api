@@ -92,7 +92,7 @@ users.get('/:id', requireRole('viewer'), async (c) => {
 
 // GET /users/:id/reports
 // Returns all reports filed against this user
-users.get('/:id/reports', requireRole('moderator'), async (c) => {
+users.get('/:id/reports', requireRole('support'), async (c) => {
   const id = c.req.param('id')
 
   const { data, error } = await supabase
@@ -107,7 +107,7 @@ users.get('/:id/reports', requireRole('moderator'), async (c) => {
 
 // GET /users/:id/messages
 // Returns recent messages sent by this user (moderator view)
-users.get('/:id/messages', requireRole('moderator'), async (c) => {
+users.get('/:id/messages', requireRole('support'), async (c) => {
   const id    = c.req.param('id')
   const limit = Number(c.req.query('limit') ?? 30)
 
@@ -124,7 +124,7 @@ users.get('/:id/messages', requireRole('moderator'), async (c) => {
 
 // GET /users/:id/sanctions
 // Returns active sanctions for a user (current moderation status)
-users.get('/:id/sanctions', requireRole('moderator'), async (c) => {
+users.get('/:id/sanctions', requireRole('support'), async (c) => {
   const id  = c.req.param('id')
   const now = new Date().toISOString()
 
@@ -142,7 +142,7 @@ users.get('/:id/sanctions', requireRole('moderator'), async (c) => {
 
 // PATCH /users/:id
 // Update admin-controlled profile fields (only is_paused for now — moderation actions use /sanctions)
-users.patch('/:id', requireRole('moderator'), async (c) => {
+users.patch('/:id', requireRole('support'), async (c) => {
   const id   = c.req.param('id')
   const body = await c.req.json<Record<string, unknown>>()
 

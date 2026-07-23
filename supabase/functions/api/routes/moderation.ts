@@ -8,7 +8,7 @@ const moderation = new Hono()
 
 // GET /moderation/reports
 // Returns user-submitted reports with reporter + reported profile info
-moderation.get('/reports', requireRole('moderator'), async (c) => {
+moderation.get('/reports', requireRole('support'), async (c) => {
   const limit = Number(c.req.query('limit') ?? 50)
 
   const { data, error } = await supabase
@@ -27,7 +27,7 @@ moderation.get('/reports', requireRole('moderator'), async (c) => {
 
 // GET /moderation/reports/:id
 // Returns a single report with full profile info
-moderation.get('/reports/:id', requireRole('moderator'), async (c) => {
+moderation.get('/reports/:id', requireRole('support'), async (c) => {
   const id = c.req.param('id')
 
   const { data, error } = await supabase
@@ -48,7 +48,7 @@ moderation.get('/reports/:id', requireRole('moderator'), async (c) => {
 
 // GET /moderation/flagged-messages
 // Returns messages flagged by the word-filter system
-moderation.get('/flagged-messages', requireRole('moderator'), async (c) => {
+moderation.get('/flagged-messages', requireRole('support'), async (c) => {
   const limit = Number(c.req.query('limit') ?? 50)
 
   const { data, error } = await supabase
@@ -68,7 +68,7 @@ moderation.get('/flagged-messages', requireRole('moderator'), async (c) => {
 
 // GET /moderation/flagged-messages/count
 // Returns total count of unreviewed flagged messages
-moderation.get('/flagged-messages/count', requireRole('moderator'), async (c) => {
+moderation.get('/flagged-messages/count', requireRole('support'), async (c) => {
   const { count, error } = await supabase
     .from('messages')
     .select('*', { count: 'exact', head: true })
@@ -83,7 +83,7 @@ moderation.get('/flagged-messages/count', requireRole('moderator'), async (c) =>
 
 // GET /moderation/blocks
 // Returns recent block events for pattern detection
-moderation.get('/blocks', requireRole('moderator'), async (c) => {
+moderation.get('/blocks', requireRole('support'), async (c) => {
   const limit = Number(c.req.query('limit') ?? 50)
 
   const { data, error } = await supabase
@@ -105,7 +105,7 @@ moderation.get('/blocks', requireRole('moderator'), async (c) => {
 
 // GET /moderation/users/:id/sanctions
 // Returns full sanction history for a user
-moderation.get('/users/:id/sanctions', requireRole('moderator'), async (c) => {
+moderation.get('/users/:id/sanctions', requireRole('support'), async (c) => {
   const id = c.req.param('id')
 
   const { data, error } = await supabase
@@ -119,7 +119,7 @@ moderation.get('/users/:id/sanctions', requireRole('moderator'), async (c) => {
 })
 
 // POST /moderation/users/:id/warn
-moderation.post('/users/:id/warn', requireRole('moderator'), async (c) => {
+moderation.post('/users/:id/warn', requireRole('support'), async (c) => {
   const id        = c.req.param('id')
   const body      = await c.req.json<{ reason: string }>()
   const adminUser = c.get('adminUser') as { id: string }
@@ -135,7 +135,7 @@ moderation.post('/users/:id/warn', requireRole('moderator'), async (c) => {
 })
 
 // POST /moderation/users/:id/suspend
-moderation.post('/users/:id/suspend', requireRole('admin'), async (c) => {
+moderation.post('/users/:id/suspend', requireRole('super_admin'), async (c) => {
   const id        = c.req.param('id')
   const body      = await c.req.json<{ duration_hours: number; reason: string }>()
   const adminUser = c.get('adminUser') as { id: string }
@@ -153,7 +153,7 @@ moderation.post('/users/:id/suspend', requireRole('admin'), async (c) => {
 })
 
 // POST /moderation/users/:id/ban
-moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
+moderation.post('/users/:id/ban', requireRole('super_admin'), async (c) => {
   const id        = c.req.param('id')
   const body      = await c.req.json<{ reason: string }>()
   const adminUser = c.get('adminUser') as { id: string }
@@ -171,7 +171,7 @@ moderation.post('/users/:id/ban', requireRole('admin'), async (c) => {
 
 // POST /moderation/sanctions/:id/revoke
 // Revoke any active sanction (unban, unsuspend, clear warning)
-moderation.post('/sanctions/:id/revoke', requireRole('admin'), async (c) => {
+moderation.post('/sanctions/:id/revoke', requireRole('super_admin'), async (c) => {
   const id        = c.req.param('id')
   const adminUser = c.get('adminUser') as { id: string }
 
