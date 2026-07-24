@@ -32,7 +32,43 @@ users.get('/', requireRole('viewer'), async (c) => {
 
   const { data, count, error } = await query
   if (error) return c.json({ error: error.message }, 500)
-  return c.json({ data, count })
+
+  // Batch-fetch first profile photo for each user
+  const userIds = (data ?? []).map((p: any) => p.id)
+  let photoMap: Record<string, string | null> = {}
+  if (userIds.length > 0) {
+    const { data: photos } = await supabase
+      .from('photos')
+      .select('user_id, url, order_index')
+      .in('user_id', userIds)
+      .order('order_index')
+    if (photos) {
+      for (const p of photos as { user_id: string; url: string }[]) {
+        if (!photoMap[p.user_id]) photoMap[p.user_id] = p.url
+      }
+    }
+  }
+
+  // Batch count chats each user has participated in
+  let convCountMap: Record<string, number> = {}
+  if (userIds.length > 0) {
+    const { data: participants } = await supabase
+      .from('chat_participants')
+      .select('user_id')
+      .in('user_id', userIds)
+    if (participants) {
+      for (const p of participants as { user_id: string }[]) {
+        convCountMap[p.user_id] = (convCountMap[p.user_id] ?? 0) + 1
+      }
+    }
+  }
+
+  const enriched = (data ?? []).map((p: any) => ({
+    ...p,
+    photo_url:          photoMap[p.id]   ?? null,
+    conversation_count: convCountMap[p.id] ?? 0,
+  }))
+  return c.json({ data: enriched, count })
 })
 
 // GET /users/summary/counts
