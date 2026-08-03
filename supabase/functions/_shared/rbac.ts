@@ -1,11 +1,13 @@
 import type { Context, Next } from 'npm:hono@4'
 
-export type AdminRole = 'viewer' | 'support' | 'super_admin'
+export type AdminRole = 'viewer' | 'support' | 'moderator' | 'admin' | 'super_admin'
 
 const ROLE_RANK: Record<AdminRole, number> = {
   viewer:      0,
   support:     1,
-  super_admin: 2,
+  moderator:   2,
+  admin:       3,
+  super_admin: 4,
 }
 
 /** Returns a Hono middleware that requires the caller to have at least `minRole`. */
