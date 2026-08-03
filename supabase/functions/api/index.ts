@@ -2,6 +2,7 @@ import { Hono } from 'npm:hono@4'
 import { cors } from 'npm:hono@4/cors'
 import { corsOptions } from '../_shared/cors.ts'
 import { authMiddleware } from '../_shared/auth.ts'
+import { supabase } from '../_shared/supabase.ts'
 
 import analytics  from './routes/analytics.ts'
 import moderation from './routes/moderation.ts'
@@ -23,6 +24,18 @@ app.use('*', authMiddleware)
 
 // GET /api/me — returns the current admin user's profile
 app.get('/me', (c) => c.json({ data: c.get('adminUser') }))
+
+// PATCH /api/me/avatar — update the calling admin's robot avatar seed
+app.patch('/me/avatar', async (c) => {
+  const adminUser = c.get('adminUser') as { id: string }
+  const { seed } = await c.req.json<{ seed: string | null }>()
+  const { error } = await supabase
+    .from('admin_users')
+    .update({ avatar_seed: seed ?? null })
+    .eq('id', adminUser.id)
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true, avatar_seed: seed ?? null })
+})
 
 // ── Route groups ────────────────────────────────────────────────────────────
 

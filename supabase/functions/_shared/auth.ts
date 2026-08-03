@@ -20,7 +20,7 @@ export async function authMiddleware(c: Context, next: Next) {
   // Confirm the user exists in admin_users table
   const { data: adminUser, error: adminError } = await supabase
     .from('admin_users')
-    .select('id, user_id, email, full_name, role')
+    .select('id, user_id, email, full_name, role, avatar_seed')
     .eq('user_id', user.id)
     .single()
 
