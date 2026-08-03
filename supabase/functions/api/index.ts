@@ -9,6 +9,7 @@ import moderation from './routes/moderation.ts'
 import chat       from './routes/chat.ts'
 import finance    from './routes/finance.ts'
 import users      from './routes/users.ts'
+import email      from './routes/email.ts'
 
 const app = new Hono().basePath('/api')
 
@@ -44,6 +45,7 @@ app.route('/moderation',       moderation)
 app.route('/moderation/chat',  chat)
 app.route('/finance',          finance)
 app.route('/users',            users)
+app.route('/email',            email)
 
 // ── Fallback ────────────────────────────────────────────────────────────────
 
