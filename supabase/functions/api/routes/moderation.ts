@@ -272,16 +272,23 @@ moderation.get('/flagged-messages', requireRole('support'), async (c) => {
 })
 
 // GET /moderation/flagged-messages/count
-// Returns total count of unreviewed flagged messages
+// Returns pending message_flags split by detection source: keyword (system) vs user_report
 moderation.get('/flagged-messages/count', requireRole('support'), async (c) => {
-  const { count, error } = await supabase
-    .from('messages')
-    .select('*', { count: 'exact', head: true })
-    .eq('contains_flagged_words', true)
-    .eq('is_deleted', false)
+  const [systemRes, userRes] = await Promise.all([
+    supabase.from('message_flags').select('*', { count: 'exact', head: true })
+      .eq('status', 'pending').eq('detection_source', 'keyword'),
+    supabase.from('message_flags').select('*', { count: 'exact', head: true })
+      .eq('status', 'pending').eq('detection_source', 'user_report'),
+  ])
 
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ count: count ?? 0 })
+  if (systemRes.error) return c.json({ error: systemRes.error.message }, 500)
+  if (userRes.error)   return c.json({ error: userRes.error.message },   500)
+
+  return c.json({
+    system:       systemRes.count ?? 0,
+    user_reported: userRes.count  ?? 0,
+    total:        (systemRes.count ?? 0) + (userRes.count ?? 0),
+  })
 })
 
 // ── Blocks ───────────────────────────────────────────────────────────────────

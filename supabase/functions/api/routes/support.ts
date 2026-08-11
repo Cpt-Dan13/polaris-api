@@ -34,6 +34,18 @@ support.get('/', requireRole('viewer'), async (c) => {
   return c.json({ data: normalised, count })
 })
 
+// GET /support/count
+// Returns count of open support tickets
+support.get('/count', requireRole('viewer'), async (c) => {
+  const { count, error } = await supabase
+    .from('support_tickets')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'open')
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ count: count ?? 0 })
+})
+
 // PATCH /support/:id
 // Update a ticket's status, assigned_to, and/or assessment_note.
 support.patch('/:id', requireRole('support'), async (c) => {
