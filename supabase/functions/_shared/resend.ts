@@ -7,19 +7,21 @@ function apiKey(): string {
   return key
 }
 
-function headers() {
+function headers(idempotencyKey?: string) {
   return {
     'Authorization': `Bearer ${apiKey()}`,
     'Content-Type':  'application/json',
+    ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
   }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EmailPayload {
-  to:      string
-  subject: string
-  html:    string
+  to:              string
+  subject:         string
+  html:            string
+  idempotencyKey?: string
 }
 
 export interface SendResult {
@@ -29,10 +31,10 @@ export interface SendResult {
 
 // ── Single send ───────────────────────────────────────────────────────────────
 
-export async function sendEmail({ to, subject, html }: EmailPayload): Promise<void> {
+export async function sendEmail({ to, subject, html, idempotencyKey }: EmailPayload): Promise<void> {
   const res = await fetch(`${RESEND_URL}/emails`, {
     method:  'POST',
-    headers: headers(),
+    headers: headers(idempotencyKey),
     body:    JSON.stringify({ from: FROM, to, subject, html }),
   })
 
