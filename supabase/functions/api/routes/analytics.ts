@@ -373,24 +373,75 @@ analytics.get('/active-users/trend', requireRole('viewer'), async (c) => {
 })
 
 // GET /analytics/active-users
-// Estimates DAU/WAU/MAU from message send activity
+// Returns DAU/WAU/MAU: today's DAU is distinct users with a session today (user_sessions);
+// dau_last_week is the same metric for the same day last week (for WoW change %).
+// WAU/MAU are message-send proxies.
 analytics.get('/active-users', requireRole('viewer'), async (c) => {
-  const now      = new Date()
-  const day1ago  = new Date(now.getTime() - 1  * 86_400_000).toISOString()
-  const day7ago  = new Date(now.getTime() - 7  * 86_400_000).toISOString()
-  const day30ago = new Date(now.getTime() - 30 * 86_400_000).toISOString()
+  const now        = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const lastWeekStart = new Date(todayStart.getTime() - 7 * 86_400_000)
+  const lastWeekEnd   = new Date(todayStart.getTime() - 6 * 86_400_000)
+  const day7ago    = new Date(now.getTime() -  7 * 86_400_000).toISOString()
+  const day30ago   = new Date(now.getTime() - 30 * 86_400_000).toISOString()
 
-  const [dau, wau, mau] = await Promise.all([
-    supabase.from('messages').select('sender_id', { count: 'exact', head: true }).gte('created_at', day1ago),
+  const [todaySessions, lastWeekSessions, wau, mau] = await Promise.all([
+    supabase.from('user_sessions').select('user_id').gte('started_at', todayStart.toISOString()),
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', lastWeekStart.toISOString())
+      .lt('started_at',  lastWeekEnd.toISOString()),
     supabase.from('messages').select('sender_id', { count: 'exact', head: true }).gte('created_at', day7ago),
     supabase.from('messages').select('sender_id', { count: 'exact', head: true }).gte('created_at', day30ago),
   ])
 
+  const dau          = new Set((todaySessions.data    ?? []).map((s: { user_id: string }) => s.user_id)).size
+  const dau_last_week = new Set((lastWeekSessions.data ?? []).map((s: { user_id: string }) => s.user_id)).size
+
   return c.json({
-    dau: dau.count ?? 0,
+    dau,
+    dau_last_week,
     wau: wau.count ?? 0,
     mau: mau.count ?? 0,
   })
+})
+
+// GET /analytics/subscribers
+// Returns active subscriber counts per paid tier broken down by gender (patriarch / muse)
+analytics.get('/subscribers', requireRole('viewer'), async (c) => {
+  const { data: subs, error } = await supabase
+    .from('subscriptions')
+    .select('user_id, tier')
+    .in('tier', ['nova', 'supernova'])
+    .eq('status', 'active')
+
+  if (error) return c.json({ error: error.message }, 500)
+
+  const userIds = (subs ?? []).map((s: { user_id: string; tier: string }) => s.user_id)
+
+  const tierMap = new Map<string, string>()
+  for (const s of subs ?? []) tierMap.set(s.user_id, s.tier)
+
+  const result = {
+    nova:      { total: 0, patriarch: 0, muse: 0 },
+    supernova: { total: 0, patriarch: 0, muse: 0 },
+  }
+
+  if (userIds.length === 0) return c.json(result)
+
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, gender')
+    .in('id', userIds)
+
+  for (const p of (profiles ?? []) as Array<{ id: string; gender: string }>) {
+    const tier = tierMap.get(p.id)
+    if (tier !== 'nova' && tier !== 'supernova') continue
+    const bucket = result[tier]
+    bucket.total++
+    if (p.gender === 'patriarch') bucket.patriarch++
+    else if (p.gender === 'muse') bucket.muse++
+  }
+
+  return c.json(result)
 })
 
 // GET /analytics/gender-split
