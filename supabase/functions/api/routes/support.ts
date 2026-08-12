@@ -46,6 +46,19 @@ support.get('/count', requireRole('viewer'), async (c) => {
   return c.json({ count: count ?? 0 })
 })
 
+// GET /support/assignees
+// Returns admin users with the 'support' role for the Assigned To dropdown.
+support.get('/assignees', requireRole('viewer'), async (c) => {
+  const { data, error } = await supabase
+    .from('admin_users')
+    .select('id, full_name, email')
+    .eq('role', 'support')
+    .order('full_name', { ascending: true })
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ data: data ?? [] })
+})
+
 // PATCH /support/:id
 // Update a ticket's status, assigned_to, and/or assessment_note.
 support.patch('/:id', requireRole('support'), async (c) => {
