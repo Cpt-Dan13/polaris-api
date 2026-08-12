@@ -9,7 +9,7 @@ const moderation = new Hono()
 // GET /moderation/reports/kpis
 // Aggregated counts for the Report Evaluation dashboard
 // NOTE: must be declared before /:id to avoid matching 'kpis' as an id param
-moderation.get('/reports/kpis', requireRole('support'), async (c) => {
+moderation.get('/reports/kpis', requireRole('viewer'), async (c) => {
   const [openRes, investigatingRes, resolvedRes, dismissedRes, totalRes] = await Promise.all([
     supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', 'open'),
     supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', 'investigating'),
@@ -36,7 +36,7 @@ moderation.get('/reports/kpis', requireRole('support'), async (c) => {
 // GET /moderation/reports/category-trend
 // Weekly report counts per category over the last 8 weeks (for the trend chart)
 // NOTE: must be declared before /:id
-moderation.get('/reports/category-trend', requireRole('support'), async (c) => {
+moderation.get('/reports/category-trend', requireRole('viewer'), async (c) => {
   const WEEKS   = 8
   const MS_WEEK = 7 * 24 * 3_600_000
   const now     = new Date()
@@ -84,7 +84,7 @@ moderation.get('/reports/category-trend', requireRole('support'), async (c) => {
 
 // GET /moderation/reports/category-breakdown
 // Count of non-trivial classified reports grouped by category
-moderation.get('/reports/category-breakdown', requireRole('support'), async (c) => {
+moderation.get('/reports/category-breakdown', requireRole('viewer'), async (c) => {
   const { data, error } = await supabase
     .from('reports')
     .select('category')
@@ -107,7 +107,7 @@ moderation.get('/reports/category-breakdown', requireRole('support'), async (c) 
 // GET /moderation/reports
 // Paginated non-trivial reports with reporter + reported profiles + photos
 // Query params: status, category, priority, limit, offset
-moderation.get('/reports', requireRole('support'), async (c) => {
+moderation.get('/reports', requireRole('viewer'), async (c) => {
   const limit    = Math.min(Number(c.req.query('limit')  ?? 50), 200)
   const offset   = Number(c.req.query('offset') ?? 0)
   const status   = c.req.query('status')
@@ -169,7 +169,7 @@ moderation.get('/reports', requireRole('support'), async (c) => {
 
 // GET /moderation/reports/:id
 // Returns a single report with full profile info
-moderation.get('/reports/:id', requireRole('support'), async (c) => {
+moderation.get('/reports/:id', requireRole('viewer'), async (c) => {
   const id = c.req.param('id')
 
   const { data, error } = await supabase
@@ -253,7 +253,7 @@ moderation.post('/reports/:id/action', requireRole('support'), async (c) => {
 
 // GET /moderation/flagged-messages
 // Returns messages flagged by the word-filter system
-moderation.get('/flagged-messages', requireRole('support'), async (c) => {
+moderation.get('/flagged-messages', requireRole('viewer'), async (c) => {
   const limit = Number(c.req.query('limit') ?? 50)
 
   const { data, error } = await supabase
@@ -273,7 +273,7 @@ moderation.get('/flagged-messages', requireRole('support'), async (c) => {
 
 // GET /moderation/flagged-messages/count
 // Returns pending message_flags split by detection source: keyword (system) vs user_report
-moderation.get('/flagged-messages/count', requireRole('support'), async (c) => {
+moderation.get('/flagged-messages/count', requireRole('viewer'), async (c) => {
   const [systemRes, userRes] = await Promise.all([
     supabase.from('message_flags').select('*', { count: 'exact', head: true })
       .eq('status', 'pending').eq('detection_source', 'keyword'),
@@ -295,7 +295,7 @@ moderation.get('/flagged-messages/count', requireRole('support'), async (c) => {
 
 // GET /moderation/blocks
 // Returns recent block events for pattern detection
-moderation.get('/blocks', requireRole('support'), async (c) => {
+moderation.get('/blocks', requireRole('viewer'), async (c) => {
   const limit = Number(c.req.query('limit') ?? 50)
 
   const { data, error } = await supabase
@@ -317,7 +317,7 @@ moderation.get('/blocks', requireRole('support'), async (c) => {
 
 // GET /moderation/users/:id/sanctions
 // Returns full sanction history for a user
-moderation.get('/users/:id/sanctions', requireRole('support'), async (c) => {
+moderation.get('/users/:id/sanctions', requireRole('viewer'), async (c) => {
   const id = c.req.param('id')
 
   const { data, error } = await supabase

@@ -7,7 +7,7 @@ const chat = new Hono()
 // ── GET /moderation/chat/kpis ────────────────────────────────────────────────
 // Dashboard KPI pills: monitored today, flag rate, awaiting review, auto-approved rate
 
-chat.get('/kpis', requireRole('support'), async (c) => {
+chat.get('/kpis', requireRole('viewer'), async (c) => {
   const todayStart = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z'
 
   const [monitoredRes, flaggedTodayRes, awaitingRes, autoApprovedRes, totalApprovedRes] =
@@ -62,7 +62,7 @@ chat.get('/kpis', requireRole('support'), async (c) => {
 // ── GET /moderation/chat/risk-distribution ───────────────────────────────────
 // Count of message flags grouped by category (classified flags only)
 
-chat.get('/risk-distribution', requireRole('support'), async (c) => {
+chat.get('/risk-distribution', requireRole('viewer'), async (c) => {
   // Fetch just the category column — bounded count (< 10k/day reasonable for MVP)
   const { data, error } = await supabase
     .from('message_flags')
@@ -86,7 +86,7 @@ chat.get('/risk-distribution', requireRole('support'), async (c) => {
 // Paginated flagged conversations with sender/receiver profile + message snippet
 // Query params: status, severity, limit, offset
 
-chat.get('/flags', requireRole('support'), async (c) => {
+chat.get('/flags', requireRole('viewer'), async (c) => {
   const limit           = Math.min(Number(c.req.query('limit')  ?? 50), 200)
   const offset          = Number(c.req.query('offset') ?? 0)
   const status          = c.req.query('status')
