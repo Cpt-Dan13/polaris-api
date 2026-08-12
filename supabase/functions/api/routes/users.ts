@@ -35,16 +35,16 @@ users.get('/', requireRole('viewer'), async (c) => {
 
   // Batch-fetch first profile photo for each user
   const userIds = (data ?? []).map((p: any) => p.id)
-  let photoMap: Record<string, string | null> = {}
+  let photoMap: Record<string, { url: string; blurhash: string | null } | null> = {}
   if (userIds.length > 0) {
     const { data: photos } = await supabase
       .from('photos')
-      .select('user_id, url, order_index')
+      .select('user_id, url, order_index, blurhash')
       .in('user_id', userIds)
       .order('order_index')
     if (photos) {
-      for (const p of photos as { user_id: string; url: string }[]) {
-        if (!photoMap[p.user_id]) photoMap[p.user_id] = p.url
+      for (const p of photos as { user_id: string; url: string; blurhash: string | null }[]) {
+        if (!photoMap[p.user_id]) photoMap[p.user_id] = { url: p.url, blurhash: p.blurhash ?? null }
       }
     }
   }
@@ -65,7 +65,8 @@ users.get('/', requireRole('viewer'), async (c) => {
 
   const enriched = (data ?? []).map((p: any) => ({
     ...p,
-    photo_url:          photoMap[p.id]   ?? null,
+    photo_url:          photoMap[p.id]?.url      ?? null,
+    photo_blurhash:     photoMap[p.id]?.blurhash ?? null,
     conversation_count: convCountMap[p.id] ?? 0,
   }))
   return c.json({ data: enriched, count })

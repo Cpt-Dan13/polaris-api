@@ -185,7 +185,7 @@ analytics.get('/active-users/top-users', requireRole('viewer'), async (c) => {
 
   const [profilesRes, photosRes] = await Promise.all([
     supabase.from('profiles').select('id, first_name, last_name, gender').in('id', topUserIds),
-    supabase.from('photos').select('user_id, url, order_index').in('user_id', topUserIds).order('order_index'),
+    supabase.from('photos').select('user_id, url, order_index, blurhash').in('user_id', topUserIds).order('order_index'),
   ])
 
   const profileMap = new Map<string, { first_name: string; last_name: string | null; gender: string }>()
@@ -193,9 +193,9 @@ analytics.get('/active-users/top-users', requireRole('viewer'), async (c) => {
     profileMap.set(p.id, p)
   }
 
-  const photoMap = new Map<string, string>()
-  for (const photo of (photosRes.data ?? []) as Array<{ user_id: string; url: string; order_index: number }>) {
-    if (!photoMap.has(photo.user_id)) photoMap.set(photo.user_id, photo.url)
+  const photoMap = new Map<string, { url: string; blurhash: string | null }>()
+  for (const photo of (photosRes.data ?? []) as Array<{ user_id: string; url: string; order_index: number; blurhash: string | null }>) {
+    if (!photoMap.has(photo.user_id)) photoMap.set(photo.user_id, { url: photo.url, blurhash: photo.blurhash ?? null })
   }
 
   const result = topUserIds.map(userId => {
@@ -212,7 +212,8 @@ analytics.get('/active-users/top-users', requireRole('viewer'), async (c) => {
       name:                 lastName ? `${firstName} ${lastName}` : firstName,
       initials:             ((firstName[0] ?? '') + (lastName?.[0] ?? '')).toUpperCase(),
       type,
-      photo_url:            photoMap.get(userId) ?? null,
+      photo_url:            photoMap.get(userId)?.url      ?? null,
+      photo_blurhash:       photoMap.get(userId)?.blurhash ?? null,
       sessions:             stats.sessions,
       avg_duration_seconds: Math.round(avgMs / 1000),
       total_seconds:        Math.round(stats.totalMs / 1000),
@@ -846,7 +847,8 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
   // Round 2: liked-profile details (for stats/dist) + top-profile names — parallel
   let likedProfiles: { id: string; height_cm: number | null; gender: string; date_of_birth: string }[] = []
   const profileNamesMap: Record<string, { first_name: string; last_name: string | null }> = {}
-  const photoMap: Record<string, string> = {}
+  const photoMap:     Record<string, string>           = {}
+  const blurhashMap:  Record<string, string | null>    = {}
 
   const CHUNK = 200
   const likedFetches: Promise<void>[] = []
@@ -869,10 +871,13 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     : Promise.resolve()
 
   const photosFetch = nameIds.length > 0
-    ? supabase.from('photos').select('user_id, url, order_index').in('user_id', nameIds).order('order_index')
+    ? supabase.from('photos').select('user_id, url, order_index, blurhash').in('user_id', nameIds).order('order_index')
         .then(({ data }) => {
           for (const photo of data ?? []) {
-            if (!photoMap[photo.user_id]) photoMap[photo.user_id] = photo.url
+            if (!photoMap[photo.user_id]) {
+              photoMap[photo.user_id]    = photo.url
+              blurhashMap[photo.user_id] = photo.blurhash ?? null
+            }
           }
         })
     : Promise.resolve()
@@ -1014,34 +1019,41 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
     return photoMap[id] ?? null
   }
 
+  function getBlurhash(id: string): string | null {
+    return blurhashMap[id] ?? null
+  }
+
   function buildTopPerforming(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:      getName(id),
-      initials:  getInitials(id),
-      photo_url: getPhoto(id),
-      stars:     starsFreq[id] ?? 0,
-      likes:     likesFreq[id] ?? 0,
+      name:           getName(id),
+      initials:       getInitials(id),
+      photo_url:      getPhoto(id),
+      photo_blurhash: getBlurhash(id),
+      stars:          starsFreq[id] ?? 0,
+      likes:          likesFreq[id] ?? 0,
     }))
   }
 
   function buildMostPopular(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:      getName(id),
-      initials:  getInitials(id),
-      photo_url: getPhoto(id),
-      views:     viewsFreq[id] ?? 0,
+      name:           getName(id),
+      initials:       getInitials(id),
+      photo_url:      getPhoto(id),
+      photo_blurhash: getBlurhash(id),
+      views:          viewsFreq[id] ?? 0,
     }))
   }
 
   function buildMostDisliked(ids: string[]) {
     return ids.map(id => ({
       id,
-      name:      getName(id),
-      initials:  getInitials(id),
-      photo_url: getPhoto(id),
-      passes:    passesRxFreq[id] ?? 0,
+      name:           getName(id),
+      initials:       getInitials(id),
+      photo_url:      getPhoto(id),
+      photo_blurhash: getBlurhash(id),
+      passes:         passesRxFreq[id] ?? 0,
     }))
   }
 
@@ -1052,9 +1064,10 @@ analytics.get('/profiles', requireRole('viewer'), async (c) => {
       const severity = reports >= 20 ? 'high' : reports >= 10 ? 'medium' : 'low'
       return {
         id,
-        name:      getName(id),
-        initials:  getInitials(id),
-        photo_url: getPhoto(id),
+        name:           getName(id),
+        initials:       getInitials(id),
+        photo_url:      getPhoto(id),
+        photo_blurhash: getBlurhash(id),
         reports,
         blocks,
         severity,

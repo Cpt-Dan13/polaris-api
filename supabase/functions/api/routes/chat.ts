@@ -118,15 +118,15 @@ chat.get('/flags', requireRole('support'), async (c) => {
   const userIds = [...new Set(
     rows.flatMap((r: any) => [r.sender?.id, r.receiver?.id]).filter(Boolean)
   )]
-  const photoMap = new Map<string, string>()
+  const photoMap = new Map<string, { url: string; blurhash: string | null }>()
   if (userIds.length > 0) {
     const { data: photos } = await supabase
       .from('photos')
-      .select('user_id, url')
+      .select('user_id, url, blurhash')
       .in('user_id', userIds)
       .order('order_index')
     for (const p of photos ?? []) {
-      if (!photoMap.has(p.user_id)) photoMap.set(p.user_id, p.url)
+      if (!photoMap.has(p.user_id)) photoMap.set(p.user_id, { url: p.url, blurhash: p.blurhash ?? null })
     }
   }
 
@@ -148,8 +148,8 @@ chat.get('/flags', requireRole('support'), async (c) => {
       detection_source:      row.detection_source,
       tech_review_requested: row.tech_review_requested,
       created_at:            row.created_at,
-      sender:   row.sender   ? { ...row.sender,   photo_url: photoMap.get(row.sender.id)   ?? null } : null,
-      receiver: row.receiver ? { ...row.receiver, photo_url: photoMap.get(row.receiver.id) ?? null } : null,
+      sender:   row.sender   ? { ...row.sender,   photo_url: photoMap.get(row.sender.id)?.url   ?? null, photo_blurhash: photoMap.get(row.sender.id)?.blurhash   ?? null } : null,
+      receiver: row.receiver ? { ...row.receiver, photo_url: photoMap.get(row.receiver.id)?.url ?? null, photo_blurhash: photoMap.get(row.receiver.id)?.blurhash ?? null } : null,
       snippet,
     }
   })

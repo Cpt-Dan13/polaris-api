@@ -138,15 +138,15 @@ moderation.get('/reports', requireRole('support'), async (c) => {
   const userIds = [...new Set(
     rows.flatMap((r: any) => [r.reporter?.id, r.reported?.id]).filter(Boolean)
   )]
-  const photoMap = new Map<string, string>()
+  const photoMap = new Map<string, { url: string; blurhash: string | null }>()
   if (userIds.length > 0) {
     const { data: photos } = await supabase
       .from('photos')
-      .select('user_id, url')
+      .select('user_id, url, blurhash')
       .in('user_id', userIds)
       .order('order_index')
     for (const p of photos ?? []) {
-      if (!photoMap.has(p.user_id)) photoMap.set(p.user_id, p.url)
+      if (!photoMap.has(p.user_id)) photoMap.set(p.user_id, { url: p.url, blurhash: p.blurhash ?? null })
     }
   }
 
@@ -160,8 +160,8 @@ moderation.get('/reports', requireRole('support'), async (c) => {
     status:     r.status,
     priority:   r.priority,
     created_at: r.created_at,
-    reporter: r.reporter ? { ...r.reporter, photo_url: photoMap.get(r.reporter.id) ?? null } : null,
-    reported: r.reported ? { ...r.reported, photo_url: photoMap.get(r.reported.id) ?? null } : null,
+    reporter: r.reporter ? { ...r.reporter, photo_url: photoMap.get(r.reporter.id)?.url ?? null, photo_blurhash: photoMap.get(r.reporter.id)?.blurhash ?? null } : null,
+    reported: r.reported ? { ...r.reported, photo_url: photoMap.get(r.reported.id)?.url ?? null, photo_blurhash: photoMap.get(r.reported.id)?.blurhash ?? null } : null,
   }))
 
   return c.json({ data: reports, count: count ?? 0 })
