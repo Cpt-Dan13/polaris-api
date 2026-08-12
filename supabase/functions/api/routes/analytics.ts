@@ -681,6 +681,45 @@ analytics.get('/swipes', requireRole('viewer'), async (c) => {
   })
 })
 
+// GET /analytics/swipes/overview
+// Lightweight Overview-card stat: avg swipes per active user over a rolling 7-day
+// window, with WoW % change vs the prior 7-day window (days 8–14).
+// A rolling window avoids the "near-zero at 8am" problem of a today-only metric.
+analytics.get('/swipes/overview', requireRole('viewer'), async (c) => {
+  const now      = new Date()
+  const day7ago  = new Date(now.getTime() -  7 * 86_400_000)
+  const day14ago = new Date(now.getTime() - 14 * 86_400_000)
+
+  const [curLikes, curPasses, prevLikes, prevPasses, curSessions, prevSessions] = await Promise.all([
+    supabase.from('likes').select('id', { count: 'exact', head: true })
+      .gte('created_at', day7ago.toISOString()).is('liker_constellation_id', null),
+    supabase.from('passes').select('id', { count: 'exact', head: true })
+      .gte('created_at', day7ago.toISOString()),
+    supabase.from('likes').select('id', { count: 'exact', head: true })
+      .gte('created_at', day14ago.toISOString()).lt('created_at', day7ago.toISOString())
+      .is('liker_constellation_id', null),
+    supabase.from('passes').select('id', { count: 'exact', head: true })
+      .gte('created_at', day14ago.toISOString()).lt('created_at', day7ago.toISOString()),
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', day7ago.toISOString()),
+    supabase.from('user_sessions').select('user_id')
+      .gte('started_at', day14ago.toISOString()).lt('started_at', day7ago.toISOString()),
+  ])
+
+  const swipesCur  = (curLikes.count  ?? 0) + (curPasses.count  ?? 0)
+  const swipesPrev = (prevLikes.count ?? 0) + (prevPasses.count ?? 0)
+  const wauCur  = new Set((curSessions.data  ?? []).map((s: { user_id: string }) => s.user_id)).size
+  const wauPrev = new Set((prevSessions.data ?? []).map((s: { user_id: string }) => s.user_id)).size
+
+  const avgCur  = wauCur  > 0 ? Math.round(swipesCur  / wauCur  * 10) / 10 : 0
+  const avgPrev = wauPrev > 0 ? Math.round(swipesPrev / wauPrev * 10) / 10 : 0
+  const wow_change = avgPrev > 0
+    ? Math.round((avgCur - avgPrev) / avgPrev * 100)
+    : null
+
+  return c.json({ avg_swipes_per_dau: avgCur, avg_last_week: avgPrev, wow_change })
+})
+
 // GET /analytics/profiles
 // Returns height/age stats, distributions, top performing, and most popular profiles
 analytics.get('/profiles', requireRole('viewer'), async (c) => {
