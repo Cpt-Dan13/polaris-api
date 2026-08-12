@@ -11,6 +11,7 @@ import finance    from './routes/finance.ts'
 import users      from './routes/users.ts'
 import email      from './routes/email.ts'
 import support    from './routes/support.ts'
+import team       from './routes/team.ts'
 
 const app = new Hono().basePath('/api')
 
@@ -48,6 +49,7 @@ app.route('/finance',          finance)
 app.route('/users',            users)
 app.route('/email',            email)
 app.route('/support',          support)
+app.route('/team',             team)
 
 // ── Fallback ────────────────────────────────────────────────────────────────
 
