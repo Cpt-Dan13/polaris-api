@@ -28,6 +28,16 @@ app.use('*', authMiddleware)
 // GET /api/me — returns the current admin user's profile
 app.get('/me', (c) => c.json({ data: c.get('adminUser') }))
 
+// PATCH /api/me/presence — heartbeat to keep last_seen_at fresh
+app.patch('/me/presence', async (c) => {
+  const adminUser = c.get('adminUser') as { id: string }
+  await supabase
+    .from('admin_users')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('id', adminUser.id)
+  return c.json({ ok: true })
+})
+
 // PATCH /api/me/avatar — update the calling admin's robot avatar seed
 app.patch('/me/avatar', async (c) => {
   const adminUser = c.get('adminUser') as { id: string }

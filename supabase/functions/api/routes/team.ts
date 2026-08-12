@@ -72,4 +72,37 @@ team.post('/', requireRole('super_admin'), async (c) => {
   return c.json({ data }, 201)
 })
 
+// GET /team/monitoring
+// Returns all admin_users with their active (open / in-progress) support tickets.
+team.get('/monitoring', requireRole('super_admin'), async (c) => {
+  const { data: admins, error: adminsError } = await supabase
+    .from('admin_users')
+    .select('id, email, full_name, role, avatar_seed, last_seen_at')
+    .order('full_name', { ascending: true })
+
+  if (adminsError) return c.json({ error: adminsError.message }, 500)
+
+  const { data: tickets, error: ticketsError } = await supabase
+    .from('support_tickets')
+    .select('id, ref, category, status, is_urgent, assigned_to')
+    .in('status', ['open', 'in_progress'])
+    .not('assigned_to', 'is', null)
+
+  if (ticketsError) return c.json({ error: ticketsError.message }, 500)
+
+  const byAssignee: Record<string, typeof tickets> = {}
+  for (const t of (tickets ?? [])) {
+    if (!t.assigned_to) continue
+    if (!byAssignee[t.assigned_to]) byAssignee[t.assigned_to] = []
+    byAssignee[t.assigned_to].push(t)
+  }
+
+  const data = (admins ?? []).map(a => ({
+    ...a,
+    active_tickets: byAssignee[a.id] ?? [],
+  }))
+
+  return c.json({ data })
+})
+
 export default team
