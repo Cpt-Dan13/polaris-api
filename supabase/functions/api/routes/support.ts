@@ -65,7 +65,7 @@ support.patch('/:id', requireRole('support'), async (c) => {
   const id   = c.req.param('id')
   const body = await c.req.json<Record<string, unknown>>()
 
-  const allowed = ['status', 'assigned_to', 'assessment_note']
+  const allowed = ['status', 'priority', 'assigned_to', 'assessment_note']
   const update  = Object.fromEntries(
     Object.entries(body).filter(([k]) => allowed.includes(k))
   )
