@@ -7,20 +7,21 @@ const support = new Hono()
 // GET /support
 // Returns paginated support tickets with optional status / priority filters.
 support.get('/', requireRole('viewer'), async (c) => {
-  const status   = c.req.query('status')
-  const priority = c.req.query('priority')
-  const limit    = Number(c.req.query('limit')  ?? 50)
-  const offset   = Number(c.req.query('offset') ?? 0)
+  const status    = c.req.query('status')
+  const isUrgent  = c.req.query('is_urgent')
+  const limit     = Number(c.req.query('limit')  ?? 50)
+  const offset    = Number(c.req.query('offset') ?? 0)
 
   let query = supabase
     .from('support_tickets')
     .select('*', { count: 'exact' })
+    .order('is_urgent', { ascending: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
   // DB stores 'in_progress'; normalise to 'in-progress' before filtering
-  if (status)   query = query.eq('status',   status === 'in-progress' ? 'in_progress' : status)
-  if (priority) query = query.eq('priority', priority)
+  if (status)             query = query.eq('status',    status === 'in-progress' ? 'in_progress' : status)
+  if (isUrgent !== undefined && isUrgent !== null) query = query.eq('is_urgent', isUrgent === 'true')
 
   const { data, count, error } = await query
   if (error) return c.json({ error: error.message }, 500)
@@ -65,7 +66,7 @@ support.patch('/:id', requireRole('support'), async (c) => {
   const id   = c.req.param('id')
   const body = await c.req.json<Record<string, unknown>>()
 
-  const allowed = ['status', 'priority', 'assigned_to', 'assessment_note']
+  const allowed = ['status', 'is_urgent', 'assigned_to', 'assessment_note']
   const update  = Object.fromEntries(
     Object.entries(body).filter(([k]) => allowed.includes(k))
   )
