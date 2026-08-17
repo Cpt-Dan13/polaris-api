@@ -64,8 +64,9 @@ support.get('/assignees', requireRole('viewer'), async (c) => {
 // PATCH /support/:id
 // Update a ticket's status, assigned_to, and/or assessment_note.
 support.patch('/:id', requireRole('support'), async (c) => {
-  const id   = c.req.param('id')
-  const body = await c.req.json<Record<string, unknown>>()
+  const adminUser = c.get('adminUser') as { id: string; full_name: string }
+  const id        = c.req.param('id')
+  const body      = await c.req.json<Record<string, unknown>>()
 
   const allowed = ['status', 'is_urgent', 'assigned_to', 'assessment_note']
   const update  = Object.fromEntries(
@@ -110,7 +111,7 @@ support.patch('/:id', requireRole('support'), async (c) => {
       await createNotification(
         'ticket_assigned',
         'Support Ticket Assigned to You',
-        `Ticket ${data.ref} has been assigned to you`,
+        `Ticket ${data.ref} has been assigned to you by ${adminUser.full_name ?? 'an admin'}`,
         { ticket_id: data.id, ref: data.ref, category: data.category },
         assignee.user_id,
       )
