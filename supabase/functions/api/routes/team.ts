@@ -105,4 +105,19 @@ team.get('/monitoring', requireRole('super_admin'), async (c) => {
   return c.json({ data })
 })
 
+// GET /team/:id
+// Returns a single admin user by their admin_users.id. Accessible to all admin roles.
+team.get('/:id', requireRole('viewer'), async (c) => {
+  const id = c.req.param('id')
+
+  const { data, error } = await supabase
+    .from('admin_users')
+    .select('id, user_id, email, full_name, role, avatar_seed, created_at, last_seen_at')
+    .eq('id', id)
+    .single()
+
+  if (error || !data) return c.json({ error: 'Admin user not found' }, 404)
+  return c.json({ data })
+})
+
 export default team

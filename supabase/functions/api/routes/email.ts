@@ -93,12 +93,17 @@ email.post('/announcement', requireRole('moderator'), async (c) => {
 email.get('/announcements', requireRole('viewer'), async (c) => {
   const limit  = Number(c.req.query('limit')  ?? 20)
   const offset = Number(c.req.query('offset') ?? 0)
+  const sentBy = c.req.query('sent_by')
 
-  const { data, count, error } = await supabase
+  let query = supabase
     .from('announcements')
     .select('*, sent_by_admin:admin_users!sent_by(full_name)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
+
+  if (sentBy) query = query.eq('sent_by', sentBy)
+
+  const { data, count, error } = await query
 
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ data, count })

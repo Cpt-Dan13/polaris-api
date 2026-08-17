@@ -8,8 +8,9 @@ const support = new Hono()
 // GET /support
 // Returns paginated support tickets with optional status / priority filters.
 support.get('/', requireRole('viewer'), async (c) => {
-  const status    = c.req.query('status')
-  const isUrgent  = c.req.query('is_urgent')
+  const status     = c.req.query('status')
+  const isUrgent   = c.req.query('is_urgent')
+  const assignedTo = c.req.query('assigned_to')
   const limit     = Number(c.req.query('limit')  ?? 50)
   const offset    = Number(c.req.query('offset') ?? 0)
 
@@ -21,8 +22,9 @@ support.get('/', requireRole('viewer'), async (c) => {
     .range(offset, offset + limit - 1)
 
   // DB stores 'in_progress'; normalise to 'in-progress' before filtering
-  if (status)             query = query.eq('status',    status === 'in-progress' ? 'in_progress' : status)
+  if (status)     query = query.eq('status',      status === 'in-progress' ? 'in_progress' : status)
   if (isUrgent !== undefined && isUrgent !== null) query = query.eq('is_urgent', isUrgent === 'true')
+  if (assignedTo) query = query.eq('assigned_to', assignedTo)
 
   const { data, count, error } = await query
   if (error) return c.json({ error: error.message }, 500)
