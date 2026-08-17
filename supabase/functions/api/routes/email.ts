@@ -2,6 +2,7 @@ import { Hono } from 'npm:hono@4'
 import { supabase } from '../../_shared/supabase.ts'
 import { requireRole } from '../../_shared/rbac.ts'
 import { sendEmail, sendBatch, type EmailPayload } from '../../_shared/resend.ts'
+import { createNotification } from './notifications.ts'
 
 const email = new Hono()
 
@@ -74,6 +75,14 @@ email.post('/announcement', requireRole('moderator'), async (c) => {
     failed_count: failed,
     sent_by:      adminUser.id,
   })
+
+  // Side-effect: notify all admins that an email broadcast went out
+  await createNotification(
+    'announcement_sent',
+    'Email Broadcast Sent',
+    `"${title}" sent to ${audience === 'all' ? 'all users' : `${audience} subscribers`} — ${sent} delivered`,
+    { title, audience, sent_count: sent, failed_count: failed },
+  )
 
   return c.json({ sent_count: sent, failed_count: failed })
 })

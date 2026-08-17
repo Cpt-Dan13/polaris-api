@@ -4,14 +4,15 @@ import { corsOptions } from '../_shared/cors.ts'
 import { authMiddleware } from '../_shared/auth.ts'
 import { supabase } from '../_shared/supabase.ts'
 
-import analytics  from './routes/analytics.ts'
-import moderation from './routes/moderation.ts'
-import chat       from './routes/chat.ts'
-import finance    from './routes/finance.ts'
-import users      from './routes/users.ts'
-import email      from './routes/email.ts'
-import support    from './routes/support.ts'
-import team       from './routes/team.ts'
+import analytics     from './routes/analytics.ts'
+import moderation    from './routes/moderation.ts'
+import chat          from './routes/chat.ts'
+import finance       from './routes/finance.ts'
+import users         from './routes/users.ts'
+import email         from './routes/email.ts'
+import support       from './routes/support.ts'
+import team          from './routes/team.ts'
+import notifications from './routes/notifications.ts'
 
 const app = new Hono().basePath('/api')
 
@@ -60,6 +61,7 @@ app.route('/users',            users)
 app.route('/email',            email)
 app.route('/support',          support)
 app.route('/team',             team)
+app.route('/notifications',    notifications)
 
 // ── Fallback ────────────────────────────────────────────────────────────────
 

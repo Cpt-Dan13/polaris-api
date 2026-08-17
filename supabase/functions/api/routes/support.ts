@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono@4'
 import { supabase } from '../../_shared/supabase.ts'
 import { requireRole } from '../../_shared/rbac.ts'
+import { createNotification } from './notifications.ts'
 
 const support = new Hono()
 
@@ -96,6 +97,25 @@ support.patch('/:id', requireRole('support'), async (c) => {
     .single()
 
   if (error) return c.json({ error: error.message }, 500)
+
+  // Side-effect: notify the assignee when a ticket is assigned/reassigned
+  if (update.assigned_to) {
+    const { data: assignee } = await supabase
+      .from('admin_users')
+      .select('user_id, full_name')
+      .eq('id', update.assigned_to)
+      .single()
+
+    if (assignee?.user_id) {
+      await createNotification(
+        'ticket_assigned',
+        'Support Ticket Assigned to You',
+        `Ticket ${data.ref} has been assigned to you`,
+        { ticket_id: data.id, ref: data.ref, category: data.category },
+        assignee.user_id,
+      )
+    }
+  }
 
   return c.json({
     data: {
